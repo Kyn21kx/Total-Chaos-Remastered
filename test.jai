@@ -3,7 +3,7 @@
 #import "Input";
 #import "Math";
 #import "System";
-Simp :: #import "Simp";
+#load "draw_utils.jai";
 #load "entity.jai";
 #load "random_utils.jai";
 
@@ -17,12 +17,14 @@ SpawnPoint :: enum u8 {
 DEFAULT_PLAYER_COLOR :: Vector4.{1, 0.2, 1, 1};
 DEFAULT_PLAYER_SIZE_PX :: 25;
 
-DEFAULT_BULLET_SPEED : float : 800; 
+DEFAULT_BULLET_SPEED : float : 1000; 
 DEFAULT_BULLET_DAMAGE : float : 10; 
 DEFAULT_HEALTH : float : 10; 
-DEFAULT_BULLET_SIZE_PX :: 15; 
+DEFAULT_BULLET_SIZE_PX :: 20;
 
-PLAYER_BULLET_COLOR :: Vector4.{1, 0.1, 1, 1};
+
+DEFAULT_ENEMY_HEALTH :: DEFAULT_HEALTH * 2;
+PLAYER_BULLET_COLOR :: Vector4.{0, 0.2, 1, 1};
 
 ENEMY_SPAWN_TIME_THRESHOLD_IN_SECONDS : float64 : 2;
 
@@ -30,6 +32,14 @@ VEC2_DOWN :: Vector2.{0, -1};
 VEC2_UP :: Vector2.{0, 1};
 VEC2_LEFT :: Vector2.{-1, 0};
 VEC2_RIGHT :: Vector2.{1, 0};
+
+// We want the bullets to bounce off of each other, so we include the bullet collision mask
+ENEMY_BULLET_COLLISION_MASK : EEntityType : .Player | .Bullet;
+
+ENEMY_SHOOT_COOLDOWN_S :: 3.0;
+
+// TBD
+PLAYER_SHOOT_COOLDOWN_S :: 1.0;
 
 g_shouldQuitGame := false;
 g_entities : [2048] Entity;
@@ -40,6 +50,7 @@ g_currentTime : float64 = 0;
 g_enemySpawnTimer : float64 = 0;
 
 g_debugMousePtrEntityId := -1;
+g_playerId := -1;
 
 width := 1080;
 height := 720;
@@ -105,6 +116,16 @@ SpawnEntities :: (delta: float64) {
 	}
 }
 
+HandleCooldownTimers :: (entity: *Entity, delta: float) {
+	if (entity.shootCooldownTimer > 0) {
+		entity.shootCooldownTimer -= delta;
+	}
+}
+
+DrawHealthBar :: (entity: *Entity, delta: float) {
+	
+}
+
 ApplyMovement :: (entity: *Entity, deltaTime: float) {
 	entity.position += entity.velocity * deltaTime * entity.speed;
 	entity.rotation += entity.rotationVelocity * deltaTime;
@@ -133,11 +154,11 @@ AngleBetween :: (a: Vector2, b: Vector2) -> float {
     return atan2(b.y - a.y, b.x - a.x);
 }
 
-ShootBullet :: (position: Vector2, shootDir: Vector2, color: Vector4) {
+ShootBullet :: (position: Vector2, shootDir: Vector2, color: Vector4, collisionMask: EEntityType, speed: float = DEFAULT_BULLET_SPEED) {
 	bullet := Entity.{
 		type = .Bullet,
 		position = position,
-		speed = DEFAULT_BULLET_SPEED,
+		speed = speed,
 		shape = .Circle,
 		shapeSize = DEFAULT_BULLET_SIZE_PX,
 		color = color,
@@ -145,35 +166,50 @@ ShootBullet :: (position: Vector2, shootDir: Vector2, color: Vector4) {
 		velocity = shootDir,
 		initialLifetime = 3,
 		remainingLifetime = 3,
+		collisionMask = collisionMask
 	};
 	
 	AddEntity(bullet);
 }
 
 EnemyShoot :: (entity: *Entity) {
+	// Get the direction of the player
+	if (entity.type != .Enemy || entity.shootCooldownTimer > 0) return;
 	
+	shootDir := normalize(g_entities[g_playerId].position - entity.position);
+	ShootBullet(entity.position, shootDir, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+	entity.shootCooldownTimer = ENEMY_SHOOT_COOLDOWN_S;
 }
 
 PlayerShoot :: (entity: *Entity) {
 	shootDir := normalize(g_mousePosition - entity.position);
-	ShootBullet(entity.position, shootDir, PLAYER_BULLET_COLOR);
+	ShootBullet(entity.position, shootDir, PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED);
 }
 
 HandleCollision :: (first: *Entity, second: *Entity) {
-	print("Collision between % and %\n", first.id, second.id);
 	if (first.type == .Bullet && second.type == .Enemy) {
 		second.health -= first.damage;
 		// Again, we should probably address entity deletion some day
 		first.type = .None;
 		second.cacheVelocity = second.velocity;
-		second.velocity = first.velocity * 2;
+		second.velocity = first.velocity * 4;
 		second.state = .Knockback;
+		OnDamaged(second);
 		return;
 	}
-	if (first.type == .Player && second.type == .Enemy) {
-		
+	if (first.type == .Player && second.type == .Bullet) {
+		first.health -= second.damage;
+		second.type = .None;
+		// OnDamaged(first);
 		return;
 	}
+
+	if (first.type == .Bullet && second.type == .Bullet) {
+		firstVel := first.velocity;
+		first.velocity = second.velocity;
+		second.velocity = firstVel;
+	}
+	
 }
 
 CollisionSystem :: (entity: *Entity) {
@@ -185,7 +221,9 @@ CollisionSystem :: (entity: *Entity) {
 	for other : g_entities {
 		// Cannot collide with ourselves
 		otherHasCollisionLayer : bool = (other.type & EEntityType.CollisionEnabledLayer) != 0;
-		if (other.id == entity.id || !otherHasCollisionLayer) continue;
+		isOtherWithinCollisionMask : bool = (other.type & entity.collisionMask) != 0 && (other.collisionMask & entity.type) != 0;
+		if (other.id == entity.id || !otherHasCollisionLayer || !isOtherWithinCollisionMask) continue;
+
 		collidesOnX := entity.position.x >= other.position.x - other.shapeSize && entity.position.x <= other.position.x + other.shapeSize;
 		collidesOnY := entity.position.y >= other.position.y - other.shapeSize && entity.position.y <= other.position.y + other.shapeSize;
 		if (collidesOnX && collidesOnY) {
@@ -212,14 +250,24 @@ approximately_equal :: (a: Vector2, b: Vector2, epsilon: float = 0.0001) -> bool
     return abs(a.x - b.x) < epsilon && abs(a.y - b.y) < epsilon;
 }
 
+OnDamaged :: (entity: *Entity) {
+	entity.cacheColor = entity.color;
+	entity.color = Vector4.{1, 0, 0, 1};
+}
+
+OnRecoverFromDamage :: (entity: *Entity) {
+	entity.color = lerp(entity.cacheColor, Vector4.{0, 0, 0, 0}, entity.health / DEFAULT_ENEMY_HEALTH);
+}
+
 HandleKnockback :: (entity: *Entity, delta: float) {
 	// Lerp the velocity to 0
-	KNOCKBACK_RECOVER_SPEED : float : 5.0;
+	KNOCKBACK_RECOVER_SPEED : float : 20.0;
 	entity.velocity = lerp(entity.velocity, Vector2.{0, 0}, delta * KNOCKBACK_RECOVER_SPEED);
 	if approximately_equal(entity.velocity, Vector2.{0, 0}) {
 		// Restore its cached velocity
 		entity.velocity = entity.cacheVelocity;
 		entity.state = .None;
+		OnRecoverFromDamage(entity);
 	}
 }
 
@@ -319,13 +367,15 @@ Update :: () {
 			UpdatePlayer(*entity);
 		}
 		
+		HandleCooldownTimers(*entity, current_dt);
 		HandleSpecialStates(*entity, current_dt);
+		EnemyShoot(*entity);
 		ApplyMovement(*entity, current_dt);
 		HealthSystem(*entity);
 	}
 }
 
-DEFAULT_ENEMY_SPEED :: 300;
+DEFAULT_ENEMY_SPEED :: 200;
 DEFAULT_ENEMY_SIZE_PX :: 25;
 
 CreateEnemy :: (position: Vector2) -> Entity {
@@ -335,7 +385,8 @@ CreateEnemy :: (position: Vector2) -> Entity {
 		shape = .Triangle,
 		shapeSize = DEFAULT_ENEMY_SIZE_PX,
 		color = Vector4.{1, 1, 1, 1},
-		health = DEFAULT_HEALTH * 2,
+		health = DEFAULT_ENEMY_HEALTH,
+		shootCooldownTimer = ENEMY_SHOOT_COOLDOWN_S,
 		type = .Enemy
 	};
 	return result;
@@ -365,7 +416,7 @@ main :: () {
 		position = .{width / 2.0, height / 2.0},
 	};
 
-	AddEntity(player);
+	g_playerId = AddEntity(player);
 	
 	enemy := CreateEnemy(Vector2.{width / 2.0, height / 1.5});
 	AddEntity(enemy);
@@ -384,61 +435,3 @@ main :: () {
     
 }
 
-
-DrawCircle :: (center: Vector2, radius: float, color: Vector4, segments: int = 32) {
-    Simp.set_shader_for_color(true);
-
-    step := (2.0 * PI) / cast(float) segments;
-
-    for i : 0..segments-1 {
-        angle0 := step * cast(float) i;
-        angle1 := step * cast(float) (i + 1);
-
-        x0 := center.x + cos(angle0) * radius;
-        y0 := center.y + sin(angle0) * radius;
-        x1 := center.x + cos(angle1) * radius;
-        y1 := center.y + sin(angle1) * radius;
-
-        // Draw triangle: center + two points on circumference
-        Simp.immediate_triangle(
-            .{center.x, center.y, 0},
-            .{x0, y0, 0},
-            .{x1, y1, 0},
-            color,
-            color,
-            color
-        );
-    }
-}
-
-
-DrawTriangle :: (center: Vector2, size: float, angle: float, color: Vector4) {
-    // Define the three points of the triangle relative to center
-    // Pointing up by default
-    local_points := Vector2.[
-        .{0.0,          size},        // top
-        .{-size * 0.75, -size * 0.5}, // bottom left
-        .{ size * 0.75, -size * 0.5}, // bottom right
-    ];
-
-    // Rotate each point around the center
-    ca := cos(angle);
-    sa := sin(angle);
-
-    rotated : [3] Vector2;
-    for i : 0..2 {
-        p := local_points[i];
-        rotated[i] = .{
-            center.x + p.x * ca - p.y * sa,
-            center.y + p.x * sa + p.y * ca,
-        };
-    }
-
-    Simp.set_shader_for_color();
-    Simp.immediate_triangle(
-        .{rotated[0].x, rotated[0].y, 0},
-        .{rotated[1].x, rotated[1].y, 0},
-        .{rotated[2].x, rotated[2].y, 0},
-        color, color, color
-    );
-}

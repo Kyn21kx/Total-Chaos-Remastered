@@ -23,6 +23,13 @@ EEffectState :: enum u16 {
 	Knockback;
 }
 
+DEFAULT_COLLISION_MASK : EEntityType : .CollisionEnabledLayer;
+
+// HealthBarData :: struct {
+// 	originalHealth: float;
+// 	associatedEntity: m
+// }
+
 Entity :: struct {
 	id: s64 = -1;
 	position : Vector2;
@@ -36,11 +43,16 @@ Entity :: struct {
 	shape : EShape;
 	shapeSize : float;
 	color: Vector4;
+	cacheColor: Vector4;
 	damage: float;
 	health: float;
+	originalHealth: float;
 	damageAnimTimer: float;
 	remainingLifetime: float;
 	initialLifetime: float;
+	shootCooldownTimer: float;
+
+	collisionMask: EEntityType = DEFAULT_COLLISION_MASK;
 
 	type : EEntityType;
 }
