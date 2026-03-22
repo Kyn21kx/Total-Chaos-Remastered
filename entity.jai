@@ -20,6 +20,8 @@ EShape :: enum u16 {
 
 EEffectState :: enum u16 {
 	None;
+	Parry;
+	Damaged;
 	Knockback;
 }
 
@@ -51,6 +53,8 @@ Entity :: struct {
 	remainingLifetime: float;
 	initialLifetime: float;
 	shootCooldownTimer: float;
+	parryAnimTimer: float; // Anim time doubles as cooldown
+	parryPressedTime: float;
 
 	collisionMask: EEntityType = DEFAULT_COLLISION_MASK;
 

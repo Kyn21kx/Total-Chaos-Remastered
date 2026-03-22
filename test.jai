@@ -14,7 +14,7 @@ SpawnPoint :: enum u8 {
 	Right;
 }
 
-DEFAULT_PLAYER_COLOR :: Vector4.{1, 0.2, 1, 1};
+DEFAULT_PLAYER_COLOR :: Vector4.{3 / 255.0, 211 / 255.0, 252 / 255.0, 1};
 DEFAULT_PLAYER_SIZE_PX :: 25;
 
 DEFAULT_BULLET_SPEED : float : 1000; 
@@ -22,16 +22,22 @@ DEFAULT_BULLET_DAMAGE : float : 10;
 DEFAULT_HEALTH : float : 10; 
 DEFAULT_BULLET_SIZE_PX :: 20;
 
+SUCCESSFUL_PARRY_WINDOW_S :: 0.1;
 
 DEFAULT_ENEMY_HEALTH :: DEFAULT_HEALTH * 2;
 PLAYER_BULLET_COLOR :: Vector4.{0, 0.2, 1, 1};
 
 ENEMY_SPAWN_TIME_THRESHOLD_IN_SECONDS : float64 : 2;
+RECOVER_FROM_DMG_TIME_S : float : 0.2;
+
+PARRY_FX_COLOR :: Vector4.{0.01,1,0.1, 1};
 
 VEC2_DOWN :: Vector2.{0, -1};
 VEC2_UP :: Vector2.{0, 1};
 VEC2_LEFT :: Vector2.{-1, 0};
 VEC2_RIGHT :: Vector2.{1, 0};
+
+PLAYER_SWEEP_ANIMATION_TIME :: 0.2;
 
 // We want the bullets to bounce off of each other, so we include the bullet collision mask
 ENEMY_BULLET_COLLISION_MASK : EEntityType : .Player | .Bullet;
@@ -72,6 +78,11 @@ ScreenLowerRight :: () -> Vector2 {
     return .{cast(float) width, 0.0};
 }
 
+RAD_TO_DEG :: 180 / PI;
+
+DEG_TO_RAD :: PI / 180;
+
+
 DrawEntity :: (entity: *Entity) {
 	if (entity.shape == .Circle) {
 		DrawCircle(entity.position, entity.shapeSize, entity.color);
@@ -111,6 +122,7 @@ SpawnEntities :: (delta: float64) {
 		randomPosition := CalculateRandomSpawnPoint(*spawnPointGuide);
 		enemy := CreateEnemy(randomPosition);
 		enemy.velocity = SpawnPointDefaultTravelDir(spawnPointGuide, *enemy);
+		enemy.rotation = -atan2(enemy.velocity.x, enemy.velocity.y);
 		AddEntity(enemy);
 		g_enemySpawnTimer = 0.0;
 	}
@@ -129,12 +141,7 @@ DrawHealthBar :: (entity: *Entity, delta: float) {
 ApplyMovement :: (entity: *Entity, deltaTime: float) {
 	entity.position += entity.velocity * deltaTime * entity.speed;
 	entity.rotation += entity.rotationVelocity * deltaTime;
-	if (entity.rotation > 360.0) {
-		entity.rotation = 0;
-	}
-	else if (entity.rotation < 0.0) {
-		entity.rotation = 360.0;
-	}
+
 	if (entity.position.x > cast(float)width) {
 		entity.position.x = 0;
 	}
@@ -151,7 +158,7 @@ ApplyMovement :: (entity: *Entity, deltaTime: float) {
 }
 
 AngleBetween :: (a: Vector2, b: Vector2) -> float {
-    return atan2(b.y - a.y, b.x - a.x);
+    return atan2((b.y - a.y) * DEG_TO_RAD, (b.x - a.x) * DEG_TO_RAD);
 }
 
 ShootBullet :: (position: Vector2, shootDir: Vector2, color: Vector4, collisionMask: EEntityType, speed: float = DEFAULT_BULLET_SPEED) {
@@ -174,7 +181,7 @@ ShootBullet :: (position: Vector2, shootDir: Vector2, color: Vector4, collisionM
 
 EnemyShoot :: (entity: *Entity) {
 	// Get the direction of the player
-	if (entity.type != .Enemy || entity.shootCooldownTimer > 0) return;
+	if (entity.type != .Enemy || entity.shootCooldownTimer > 0 || !RandChance(1, 3)) return;
 	
 	shootDir := normalize(g_entities[g_playerId].position - entity.position);
 	ShootBullet(entity.position, shootDir, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
@@ -186,6 +193,17 @@ PlayerShoot :: (entity: *Entity) {
 	ShootBullet(entity.position, shootDir, PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED);
 }
 
+CalculateReflectionVector :: (direction: Vector2, normal: Vector2) -> Vector2 {
+	return direction - ((2.0 * dot(direction, normal)) * normal);
+}
+
+sign :: (n: float) -> float {
+	if n < 0 {
+		return -1;
+	}
+	return 1;
+}
+	
 HandleCollision :: (first: *Entity, second: *Entity) {
 	if (first.type == .Bullet && second.type == .Enemy) {
 		second.health -= first.damage;
@@ -194,22 +212,36 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 		second.cacheVelocity = second.velocity;
 		second.velocity = first.velocity * 4;
 		second.state = .Knockback;
-		OnDamaged(second);
+		OnDamaged(second, first);
 		return;
 	}
 	if (first.type == .Player && second.type == .Bullet) {
 		first.health -= second.damage;
 		second.type = .None;
-		// OnDamaged(first);
+		OnDamaged(first, second);
 		return;
 	}
 
 	if (first.type == .Bullet && second.type == .Bullet) {
-		firstVel := first.velocity;
-		first.velocity = second.velocity;
-		second.velocity = firstVel;
-	}
+		// Calculate the normal of the collision
+		diff := second.position - first.position;
 	
+	    overlapX := (first.shapeSize + second.shapeSize) - abs(diff.x);
+	    overlapY := (first.shapeSize+ second.shapeSize) - abs(diff.y);
+
+	    normal : Vector2;
+	    if overlapX < overlapY {
+	    	normal = Vector2.{sign(diff.x), 0};
+	    }
+	    else {
+	    	normal = Vector2.{0, sign(diff.y)};
+	    }
+	
+		reflectA := CalculateReflectionVector(first.velocity, normal);
+		reflectB := CalculateReflectionVector(second.velocity, normal);
+		first.velocity = reflectA;
+		second.velocity = reflectB;
+	}
 }
 
 CollisionSystem :: (entity: *Entity) {
@@ -226,6 +258,7 @@ CollisionSystem :: (entity: *Entity) {
 
 		collidesOnX := entity.position.x >= other.position.x - other.shapeSize && entity.position.x <= other.position.x + other.shapeSize;
 		collidesOnY := entity.position.y >= other.position.y - other.shapeSize && entity.position.y <= other.position.y + other.shapeSize;
+		
 		if (collidesOnX && collidesOnY) {
 			HandleCollision(entity, *other);
 		}
@@ -250,9 +283,20 @@ approximately_equal :: (a: Vector2, b: Vector2, epsilon: float = 0.0001) -> bool
     return abs(a.x - b.x) < epsilon && abs(a.y - b.y) < epsilon;
 }
 
-OnDamaged :: (entity: *Entity) {
+OnDamaged :: (entity: *Entity, damageSrc: *Entity) {
+	parryDiff := g_currentTime - entity.parryPressedTime;
+	if (parryDiff <= SUCCESSFUL_PARRY_WINDOW_S) {
+		// No damage will be applied!
+		print("Parried!\n");
+		ShootBullet(entity.position, normalize(damageSrc.position - entity.position), PARRY_FX_COLOR, .Enemy, DEFAULT_BULLET_SPEED * 1.5);
+		return;
+	}
 	entity.cacheColor = entity.color;
 	entity.color = Vector4.{1, 0, 0, 1};
+	entity.damageAnimTimer = RECOVER_FROM_DMG_TIME_S;
+	if (entity.state == .None) {
+		entity.state = .Damaged;
+	}
 }
 
 OnRecoverFromDamage :: (entity: *Entity) {
@@ -274,24 +318,57 @@ HandleKnockback :: (entity: *Entity, delta: float) {
 HandleSpecialStates :: (entity: *Entity, delta: float) {
 	if #complete entity.state == {
 		case .None; return;
+		case .Damaged; return;
+		case .Parry; return; // Info only state
 		case .Knockback; HandleKnockback(entity, delta);
 	}
 	
 }
+
+HandleAnimations :: (entity: *Entity, delta: float) {
+	PARRY_ANIM_SPEED :: 20.0;
+	if (entity.parryAnimTimer > 0) {
+		// Rotate the entity
+		entity.rotation += delta * PARRY_ANIM_SPEED;
+		entity.parryAnimTimer -= delta;
+	}
+}
 	
-UpdatePlayer :: (entity: *Entity) {
+UpdatePlayer :: (entity: *Entity, delta: float) {
 	entity.velocity = Vector2.{0, 0};
+
+	if (entity.damageAnimTimer > 0) {
+		entity.damageAnimTimer -= delta;
+	}
+
+	if (entity.state == .Damaged && entity.damageAnimTimer <= 0) {
+		entity.color = DEFAULT_PLAYER_COLOR;
+		entity.state = .None;
+	}
+
+	if (entity.state == .Parry && entity.parryAnimTimer <= 0) {
+		entity.color = DEFAULT_PLAYER_COLOR;
+		entity.state = .None;
+	}
+
 	for event : events_this_frame {
 		if event.type == .QUIT {
 			g_shouldQuitGame = true;
 		}
-
 
 		if event.type != .KEYBOARD || !event.key_pressed {
         	break;
 	    }
 		if (event.key_code == .MOUSE_BUTTON_LEFT) {
 			PlayerShoot(entity);
+		}
+		if event.key_code == .SHIFT && entity.parryAnimTimer <= 0 {
+			// Attempt to parry
+			entity.parryPressedTime = cast(float)g_currentTime;
+			entity.parryAnimTimer = PLAYER_SWEEP_ANIMATION_TIME;
+			entity.cacheColor = entity.color;
+			entity.state = .Parry;
+			entity.color = PARRY_FX_COLOR;
 		}
         if event.key_code == .ESCAPE {
 	        g_shouldQuitGame = true;
@@ -311,8 +388,14 @@ UpdatePlayer :: (entity: *Entity) {
     	entity.velocity += Vector2.{1, 0};
 	}
 
+	// We do not follow the mouse on animation
+	if (entity.parryAnimTimer > 0) {
+		return;
+	}
 	entity.velocity = normalize(entity.velocity);
-	// entity.rotation = -(AngleBetween(entity.position, g_mousePosition)) - PI / 2.0;
+	mouseDir := normalize(g_mousePosition - entity.position);
+	tmpAngle := atan2(mouseDir.x, mouseDir.y);
+	entity.rotation = -tmpAngle;
 }
 
 HealthSystem :: (entity: *Entity) {
@@ -364,18 +447,19 @@ Update :: () {
 		CollisionSystem(*entity);
 		
 		if (entity.type == .Player) {
-			UpdatePlayer(*entity);
+			UpdatePlayer(*entity, current_dt);
 		}
 		
 		HandleCooldownTimers(*entity, current_dt);
 		HandleSpecialStates(*entity, current_dt);
 		EnemyShoot(*entity);
+		HandleAnimations(*entity, current_dt);
 		ApplyMovement(*entity, current_dt);
 		HealthSystem(*entity);
 	}
 }
 
-DEFAULT_ENEMY_SPEED :: 200;
+DEFAULT_ENEMY_SPEED :: 150;
 DEFAULT_ENEMY_SIZE_PX :: 25;
 
 CreateEnemy :: (position: Vector2) -> Entity {

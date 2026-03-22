@@ -16,5 +16,5 @@ RandVec2 :: (min: Vector2, max: Vector2) -> Vector2 {
 
 
 RandChance :: (favorable: int, unfavorable: int) -> bool {
-	return RandIntInRange(favorable, unfavorable) == unfavorable;
+	return RandIntInRange(favorable, unfavorable) == unfavorable - 1;
 }
