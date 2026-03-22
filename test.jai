@@ -22,7 +22,7 @@ DEFAULT_BULLET_DAMAGE : float : 10;
 DEFAULT_HEALTH : float : 10; 
 DEFAULT_BULLET_SIZE_PX :: 20;
 
-SUCCESSFUL_PARRY_WINDOW_S :: 0.1;
+SUCCESSFUL_PARRY_WINDOW_S :: 0.3;
 
 DEFAULT_ENEMY_HEALTH :: DEFAULT_HEALTH * 2;
 PLAYER_BULLET_COLOR :: Vector4.{0, 0.2, 1, 1};
@@ -362,7 +362,7 @@ UpdatePlayer :: (entity: *Entity, delta: float) {
 		if (event.key_code == .MOUSE_BUTTON_LEFT) {
 			PlayerShoot(entity);
 		}
-		if event.key_code == .SHIFT && entity.parryAnimTimer <= 0 {
+		if event.key_code == .MOUSE_BUTTON_RIGHT && entity.parryAnimTimer <= 0 {
 			// Attempt to parry
 			entity.parryPressedTime = cast(float)g_currentTime;
 			entity.parryAnimTimer = PLAYER_SWEEP_ANIMATION_TIME;
