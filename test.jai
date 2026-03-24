@@ -52,6 +52,8 @@ g_entities : [2048] Entity;
 g_entityIndex := 0;
 g_mousePosition: Vector2;
 g_currentTime : float64 = 0;
+g_timeScale: float = 1;
+g_restoreTimeScaleAfter: float = 0;
 
 g_enemySpawnTimer : float64 = 0;
 
@@ -103,6 +105,14 @@ CalculateRandomSpawnPoint :: (outSpawnPoint: *SpawnPoint) -> Vector2 {
 		case .Left; return RandVec2(ScreenLowerLeft(), ScreenUpperLeft());
 		case .Right; return RandVec2(ScreenLowerRight(), ScreenUpperRight());
 	}
+}
+
+RestoreTimeScaleSystem :: (unscaledDelta: float) {
+	if (g_restoreTimeScaleAfter > 0) {
+		g_restoreTimeScaleAfter -= unscaledDelta;
+		return;
+	}
+	g_timeScale = 1;
 }
 
 SpawnPointDefaultTravelDir :: (spawnPosition: SpawnPoint, entity: *Entity) -> Vector2 {
@@ -216,9 +226,14 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 		return;
 	}
 	if (first.type == .Player && second.type == .Bullet) {
-		first.health -= second.damage;
+		if (OnDamaged(first, second)) {
+			first.health -= second.damage;
+		}
+		else {
+			g_timeScale = 0.3;
+			g_restoreTimeScaleAfter = 0.5;
+		}
 		second.type = .None;
-		OnDamaged(first, second);
 		return;
 	}
 
@@ -283,13 +298,29 @@ approximately_equal :: (a: Vector2, b: Vector2, epsilon: float = 0.0001) -> bool
     return abs(a.x - b.x) < epsilon && abs(a.y - b.y) < epsilon;
 }
 
-OnDamaged :: (entity: *Entity, damageSrc: *Entity) {
+magnitude :: (v: Vector2) -> float {
+    return sqrt(v.x * v.x + v.y * v.y);
+}
+
+RotateVec2 :: (vec: Vector2, degrees: float) -> Vector2 {
+	length := magnitude(vec);
+	newX := vec.x * cos(degrees * DEG_TO_RAD) - vec.y * sin(degrees * DEG_TO_RAD);
+	newY := vec.x * sin(degrees * DEG_TO_RAD) - vec.y * cos(degrees * DEG_TO_RAD);
+	return Vector2.{newX, newY};
+}
+
+OnDamaged :: (entity: *Entity, damageSrc: *Entity) -> bool {
 	parryDiff := g_currentTime - entity.parryPressedTime;
 	if (parryDiff <= SUCCESSFUL_PARRY_WINDOW_S) {
 		// No damage will be applied!
 		print("Parried!\n");
-		ShootBullet(entity.position, normalize(damageSrc.position - entity.position), PARRY_FX_COLOR, .Enemy, DEFAULT_BULLET_SPEED * 1.5);
-		return;
+		direction := normalize(damageSrc.position - entity.position);
+		ShootBullet(entity.position, direction, PARRY_FX_COLOR, .Enemy, DEFAULT_BULLET_SPEED * 1.5);
+		// 45 degree tilted
+		ShootBullet(entity.position, RotateVec2(direction, 45), PARRY_FX_COLOR, .Enemy, DEFAULT_BULLET_SPEED * 1.5);
+		// -45 degree tilted
+		ShootBullet(entity.position, RotateVec2(direction, -45), PARRY_FX_COLOR, .Enemy, DEFAULT_BULLET_SPEED * 1.5);
+		return false;
 	}
 	entity.cacheColor = entity.color;
 	entity.color = Vector4.{1, 0, 0, 1};
@@ -297,6 +328,7 @@ OnDamaged :: (entity: *Entity, damageSrc: *Entity) {
 	if (entity.state == .None) {
 		entity.state = .Damaged;
 	}
+	return true;
 }
 
 OnRecoverFromDamage :: (entity: *Entity) {
@@ -428,7 +460,8 @@ FadeEntityOverTime :: (entity: *Entity, delta: float64) {
 
 Update :: () {
     now := seconds_since_init();
-    delta : float64 = now - last_time;
+    unscaledDelta: float64 = (now - last_time);
+    delta : float64 = unscaledDelta * cast(float64)g_timeScale;
     current_dt = cast(float) delta;
 
     if current_dt > DT_MAX current_dt = DT_MAX;
@@ -438,6 +471,8 @@ Update :: () {
 	g_currentTime += delta;
 	
 	// DebugEntities();
+
+	RestoreTimeScaleSystem(cast(float)unscaledDelta);
 
 	SpawnEntities(delta);
 	for entity : g_entities {
