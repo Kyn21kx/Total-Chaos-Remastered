@@ -3,6 +3,9 @@
 #import "Input";
 #import "Math";
 #import "System";
+#import "Sound_Player";
+#import "File";
+#import "String";
 #load "draw_utils.jai";
 #load "entity.jai";
 #load "random_utils.jai";
@@ -54,6 +57,7 @@ g_mousePosition: Vector2;
 g_currentTime : float64 = 0;
 g_timeScale: float = 1;
 g_restoreTimeScaleAfter: float = 0;
+g_font: *Simp.Dynamic_Font;
 
 g_enemySpawnTimer : float64 = 0;
 
@@ -85,6 +89,7 @@ RAD_TO_DEG :: 180 / PI;
 DEG_TO_RAD :: PI / 180;
 
 
+
 DrawEntity :: (entity: *Entity) {
 	if (entity.shape == .Circle) {
 		DrawCircle(entity.position, entity.shapeSize, entity.color);
@@ -105,6 +110,14 @@ CalculateRandomSpawnPoint :: (outSpawnPoint: *SpawnPoint) -> Vector2 {
 		case .Left; return RandVec2(ScreenLowerLeft(), ScreenUpperLeft());
 		case .Right; return RandVec2(ScreenLowerRight(), ScreenUpperRight());
 	}
+}
+
+DrawUI :: () {
+	healthText := tprint("Health: %", g_entities[g_playerId].health);
+    text_width := Simp.prepare_text(g_font, healthText);
+
+    color  := Vector4.{0.5, 0.8, 0.2, 1};
+    Simp.draw_prepared_text(g_font, xx (width / 2), xx (height * 0.9), color);
 }
 
 RestoreTimeScaleSystem :: (unscaledDelta: float) {
@@ -145,9 +158,21 @@ HandleCooldownTimers :: (entity: *Entity, delta: float) {
 }
 
 DrawHealthBar :: (entity: *Entity, delta: float) {
-	
-}
+	if (entity.type != .Enemy && entity.type != .Player) {
+		return;
+	}
+    barWidth  : float = 60.0;
+    barHeight : float = 8.0;
 
+    healthPos := Vector2.{entity.position.x - barWidth / 2.0, entity.position.y + entity.shapeSize + 5.0};
+
+    // Background (dark red)
+    DrawRect(healthPos, Vector2.{barWidth, barHeight}, .{0.4, 0.0, 0.0, 1.0});
+
+    healthPct := entity.health / entity.originalHealth;
+    DrawRect(healthPos, Vector2.{barWidth * healthPct, barHeight}, .{0.0, 1.0, 0.0, 1.0});
+}
+	
 ApplyMovement :: (entity: *Entity, deltaTime: float) {
 	entity.position += entity.velocity * deltaTime * entity.speed;
 	entity.rotation += entity.rotationVelocity * deltaTime;
@@ -313,7 +338,6 @@ OnDamaged :: (entity: *Entity, damageSrc: *Entity) -> bool {
 	parryDiff := g_currentTime - entity.parryPressedTime;
 	if (parryDiff <= SUCCESSFUL_PARRY_WINDOW_S) {
 		// No damage will be applied!
-		print("Parried!\n");
 		direction := normalize(damageSrc.position - entity.position);
 		ShootBullet(entity.position, direction, PARRY_FX_COLOR, .Enemy, DEFAULT_BULLET_SPEED * 1.5);
 		// 45 degree tilted
@@ -430,10 +454,12 @@ UpdatePlayer :: (entity: *Entity, delta: float) {
 	entity.rotation = -tmpAngle;
 }
 
-HealthSystem :: (entity: *Entity) {
+HealthSystem :: (entity: *Entity, delta: float) {
 	if (entity.type != .Enemy && entity.type != .Player) {
 		return;
 	}
+	
+	DrawHealthBar(entity, delta);
 	if (entity.health <= 0) {
 		entity.type = .None;
 		return;
@@ -474,6 +500,8 @@ Update :: () {
 
 	RestoreTimeScaleSystem(cast(float)unscaledDelta);
 
+	DrawUI();
+	
 	SpawnEntities(delta);
 	for entity : g_entities {
 		if (entity.type == .None) continue;
@@ -490,7 +518,7 @@ Update :: () {
 		EnemyShoot(*entity);
 		HandleAnimations(*entity, current_dt);
 		ApplyMovement(*entity, current_dt);
-		HealthSystem(*entity);
+		HealthSystem(*entity, current_dt);
 	}
 }
 
@@ -505,6 +533,7 @@ CreateEnemy :: (position: Vector2) -> Entity {
 		shapeSize = DEFAULT_ENEMY_SIZE_PX,
 		color = Vector4.{1, 1, 1, 1},
 		health = DEFAULT_ENEMY_HEALTH,
+		originalHealth = DEFAULT_ENEMY_HEALTH,
 		shootCooldownTimer = ENEMY_SHOOT_COOLDOWN_S,
 		type = .Enemy
 	};
@@ -519,11 +548,22 @@ AddEntity :: (entity: Entity) -> s64 {
 	return retVal;
 }
 
+InitResources :: () {
+    path := path_strip_filename(get_path_of_running_executable());
+    set_working_directory(path);
+    g_font = Simp.get_font_at_size("assets/fonts/Nova_Square", "NovaSquare-Regular.ttf", 24);
+    if (!g_font) {
+    	print("Failed to load font!");
+    }
+}
+
 main :: () {
 	last_time = seconds_since_init();	
 	window := create_window(window_name="TotalChaos Remastered", width=width, height=height);	
+	// GL.gl_load(*GL.gl);
     Simp.set_render_target(window);
-
+	// create_post_process_resources();
+	// GL.glViewport(0, 0, cast(s32)width, cast(s32)height);    
     // Create the player
     player := Entity.{
 		type = .Player,
@@ -531,6 +571,7 @@ main :: () {
 		shapeSize = DEFAULT_PLAYER_SIZE_PX,
 		color = DEFAULT_PLAYER_COLOR,
 		health = DEFAULT_HEALTH * 10, // N hits
+		originalHealth = DEFAULT_HEALTH * 10, // N hits
 		speed = 500,
 		position = .{width / 2.0, height / 2.0},
 	};
@@ -540,6 +581,8 @@ main :: () {
 	enemy := CreateEnemy(Vector2.{width / 2.0, height / 1.5});
 	AddEntity(enemy);
 
+	InitResources();
+
     while !g_shouldQuitGame {
 		reset_temporary_storage();
 		update_window_events();	
@@ -547,8 +590,17 @@ main :: () {
         Clamp(*mouseY, 0, height);
         Clamp(*mouseX, 0, width);
 		g_mousePosition = Vector2.{cast(float) mouseX, height - cast(float)mouseY};
+		
+		// GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, scene_fbo);		
+		// GL.glViewport(0, 0, cast(u32)width, cast(u32)height);	    
+		
+		Simp.set_shader_for_color(true);
+		// GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, scene_fbo);		
+
         Simp.clear_render_target(.2, .3, .3, 1);
         Update();
+
+        // render_post_process();
         Simp.swap_buffers(window);
 	}
     

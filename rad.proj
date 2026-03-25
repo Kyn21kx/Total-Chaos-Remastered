@@ -1,0 +1,20 @@
+// raddbg 0.9.19 project file
+
+recent_file: path: "bloom.jai"
+recent_file: path: "test.jai"
+target:
+{
+  executable: "test.exe"
+  working_directory: ""
+  enabled: 1
+}
+breakpoint:
+{
+  source_location: "test.jai:492:12"
+  hit_count: 1
+}
+breakpoint:
+{
+  source_location: "bloom.jai:142:1"
+  hit_count: 1
+}
