@@ -25,6 +25,9 @@ DEFAULT_BULLET_DAMAGE : float : 10;
 DEFAULT_HEALTH : float : 10; 
 DEFAULT_BULLET_SIZE_PX :: 20;
 
+STAMINA_PER_BULLET :: 30;
+DEFAULT_PLAYER_STAMINA :: 100;
+
 SUCCESSFUL_PARRY_WINDOW_S :: 0.3;
 
 DEFAULT_ENEMY_HEALTH :: DEFAULT_HEALTH * 2;
@@ -49,6 +52,7 @@ ENEMY_SHOOT_COOLDOWN_S :: 3.0;
 
 // TBD
 PLAYER_SHOOT_COOLDOWN_S :: 1.0;
+STAMINA_FADE_THRESHOLD_TIME :: 1.0;
 
 g_shouldQuitGame := false;
 g_entities : [2048] Entity;
@@ -56,13 +60,19 @@ g_entityIndex := 0;
 g_mousePosition: Vector2;
 g_currentTime : float64 = 0;
 g_timeScale: float = 1;
+g_timeScaleCache: float = 1;
 g_restoreTimeScaleAfter: float = 0;
+g_staminaUnchangedTimer: float = 0;
 g_font: *Simp.Dynamic_Font;
 
 g_enemySpawnTimer : float64 = 0;
 
 g_debugMousePtrEntityId := -1;
 g_playerId := -1;
+g_isPaused := false;
+g_scoreBlendTimer : float = 0;
+g_score : int = 0;
+g_prevScore : int = 0;
 
 width := 1080;
 height := 720;
@@ -112,15 +122,31 @@ CalculateRandomSpawnPoint :: (outSpawnPoint: *SpawnPoint) -> Vector2 {
 	}
 }
 
-DrawUI :: () {
-	healthText := tprint("Health: %", g_entities[g_playerId].health);
+DrawUI :: (delta: float) {
+	scoreBlendSpeed : float : 2;
+	if (g_scoreBlendTimer > 0) {
+		g_scoreBlendTimer -= delta * scoreBlendSpeed;
+	}
+	displayScore := cast(s32)lerp(cast(float)g_prevScore, cast(float)g_score, 1 - g_scoreBlendTimer);
+	healthText := tprint("Score: %", displayScore);
     text_width := Simp.prepare_text(g_font, healthText);
 
     color  := Vector4.{0.5, 0.8, 0.2, 1};
     Simp.draw_prepared_text(g_font, xx (width / 2), xx (height * 0.9), color);
+
+    if (g_isPaused) {
+	    text_width = Simp.prepare_text(g_font, "GAME PAUSED!");
+	    Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx (height / 2), color);
+	    text_width = Simp.prepare_text(g_font, "Resume");
+	    Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx ((height / 2) * 0.9), color);
+	    text_width = Simp.prepare_text(g_font, "Quit");
+	    Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx ((height / 2) * 0.8), color);
+    }
+    
 }
 
 RestoreTimeScaleSystem :: (unscaledDelta: float) {
+	if (g_isPaused) return;
 	if (g_restoreTimeScaleAfter > 0) {
 		g_restoreTimeScaleAfter -= unscaledDelta;
 		return;
@@ -171,6 +197,37 @@ DrawHealthBar :: (entity: *Entity, delta: float) {
 
     healthPct := entity.health / entity.originalHealth;
     DrawRect(healthPos, Vector2.{barWidth * healthPct, barHeight}, .{0.0, 1.0, 0.0, 1.0});
+}
+
+DrawStaminaBar :: (entity: *Entity, delta: float) {
+	if (entity.type != .Player) {
+		return;
+	}
+	barAlpha : float = 1.0;
+	if (g_staminaUnchangedTimer > 0) {
+		g_staminaUnchangedTimer -= delta;
+	}
+
+	staminaDiff := DEFAULT_PLAYER_STAMINA - entity.stamina;
+	if  staminaDiff > 0 {
+		entity.stamina +=  delta * STAMINA_PER_BULLET;
+		// start fading at X%
+		if (staminaDiff > DEFAULT_PLAYER_STAMINA * 0.2) {
+			g_staminaUnchangedTimer = STAMINA_FADE_THRESHOLD_TIME;
+		}
+	}
+	barAlpha = lerp(0, 1, g_staminaUnchangedTimer);
+
+    barWidth  : float = 60.0;
+    barHeight : float = 8.0;
+
+    healthPos := Vector2.{entity.position.x - barWidth / 2.0, entity.position.y - entity.shapeSize - 5.0};
+
+    // Background (dark red)
+    DrawRect(healthPos, Vector2.{barWidth, barHeight}, .{0.0, 0.0, 0.0, barAlpha});
+
+    healthPct := entity.stamina / DEFAULT_PLAYER_STAMINA;
+    DrawRect(healthPos, Vector2.{barWidth * healthPct, barHeight}, .{1.0, 1.0, 0.0, barAlpha});
 }
 	
 ApplyMovement :: (entity: *Entity, deltaTime: float) {
@@ -224,8 +281,13 @@ EnemyShoot :: (entity: *Entity) {
 }
 
 PlayerShoot :: (entity: *Entity) {
+	if (entity.stamina < STAMINA_PER_BULLET) {
+		return;
+	}
 	shootDir := normalize(g_mousePosition - entity.position);
 	ShootBullet(entity.position, shootDir, PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED);
+	entity.stamina -= STAMINA_PER_BULLET;
+	g_staminaUnchangedTimer	= STAMINA_FADE_THRESHOLD_TIME;
 }
 
 CalculateReflectionVector :: (direction: Vector2, normal: Vector2) -> Vector2 {
@@ -237,6 +299,14 @@ sign :: (n: float) -> float {
 		return -1;
 	}
 	return 1;
+}
+
+IncreaseScore :: (diff: int) {
+	if (g_scoreBlendTimer <= 0) {
+		g_prevScore = g_score;
+		g_scoreBlendTimer = 1;
+	}
+	g_score += diff;
 }
 	
 HandleCollision :: (first: *Entity, second: *Entity) {
@@ -344,6 +414,8 @@ OnDamaged :: (entity: *Entity, damageSrc: *Entity) -> bool {
 		ShootBullet(entity.position, RotateVec2(direction, 45), PARRY_FX_COLOR, .Enemy, DEFAULT_BULLET_SPEED * 1.5);
 		// -45 degree tilted
 		ShootBullet(entity.position, RotateVec2(direction, -45), PARRY_FX_COLOR, .Enemy, DEFAULT_BULLET_SPEED * 1.5);
+		PARRY_SCORE_BONUS :: 7;
+		IncreaseScore(PARRY_SCORE_BONUS);
 		return false;
 	}
 	entity.cacheColor = entity.color;
@@ -426,9 +498,6 @@ UpdatePlayer :: (entity: *Entity, delta: float) {
 			entity.state = .Parry;
 			entity.color = PARRY_FX_COLOR;
 		}
-        if event.key_code == .ESCAPE {
-	        g_shouldQuitGame = true;
-        }
 	}
 	
 	if input_button_states[cast(int) #char "W"] & .DOWN {
@@ -459,12 +528,13 @@ HealthSystem :: (entity: *Entity, delta: float) {
 		return;
 	}
 	
-	DrawHealthBar(entity, delta);
 	if (entity.health <= 0) {
+		if (entity.type == .Enemy) {
+			IncreaseScore(entity.scoreAmount);
+		}
 		entity.type = .None;
 		return;
 	}
-	// Damage animation
 }
 
 FadeEntityOverTime :: (entity: *Entity, delta: float64) {
@@ -483,6 +553,30 @@ FadeEntityOverTime :: (entity: *Entity, delta: float64) {
 	// entity.shapeSize = lerp(5, DEFAULT_BULLET_SIZE_PX, lerpingBlend);
 }
 
+InputSystem :: () {
+	for event : events_this_frame {
+		if event.type == .QUIT {
+			g_shouldQuitGame = true;
+		}
+
+		if event.type != .KEYBOARD || !event.key_pressed {
+        	break;
+	    }
+		
+        if event.key_code == .ESCAPE {
+        	if !g_isPaused {
+				g_timeScaleCache = g_timeScale;        		
+        		g_timeScale = 0;
+        		g_isPaused = true;
+        	}
+        	else {
+        		g_isPaused = false;
+		        g_timeScale = g_timeScaleCache;
+        	}
+        }
+	}
+}
+
 
 Update :: () {
     now := seconds_since_init();
@@ -498,14 +592,21 @@ Update :: () {
 	
 	// DebugEntities();
 
-	RestoreTimeScaleSystem(cast(float)unscaledDelta);
 
-	DrawUI();
+	
+	InputSystem();
+	
+	
+	RestoreTimeScaleSystem(cast(float)unscaledDelta);
 	
 	SpawnEntities(delta);
 	for entity : g_entities {
 		if (entity.type == .None) continue;
 		DrawEntity(*entity);
+		DrawHealthBar(*entity, current_dt);
+		DrawStaminaBar(*entity, current_dt);
+
+		if (g_isPaused) continue; // Only draw, do not update
 		FadeEntityOverTime(*entity, delta);
 		CollisionSystem(*entity);
 		
@@ -520,10 +621,13 @@ Update :: () {
 		ApplyMovement(*entity, current_dt);
 		HealthSystem(*entity, current_dt);
 	}
+
+	DrawUI(current_dt);
 }
 
 DEFAULT_ENEMY_SPEED :: 150;
 DEFAULT_ENEMY_SIZE_PX :: 25;
+DEFAULT_ENEMY_SCORE :: 5;
 
 CreateEnemy :: (position: Vector2) -> Entity {
 	result := Entity.{
@@ -535,6 +639,7 @@ CreateEnemy :: (position: Vector2) -> Entity {
 		health = DEFAULT_ENEMY_HEALTH,
 		originalHealth = DEFAULT_ENEMY_HEALTH,
 		shootCooldownTimer = ENEMY_SHOOT_COOLDOWN_S,
+		scoreAmount = DEFAULT_ENEMY_SCORE,
 		type = .Enemy
 	};
 	return result;
@@ -573,6 +678,7 @@ main :: () {
 		health = DEFAULT_HEALTH * 10, // N hits
 		originalHealth = DEFAULT_HEALTH * 10, // N hits
 		speed = 500,
+		stamina = DEFAULT_PLAYER_STAMINA,
 		position = .{width / 2.0, height / 2.0},
 	};
 

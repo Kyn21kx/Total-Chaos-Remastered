@@ -44,10 +44,12 @@ Entity :: struct {
 	speed: float;
 	shape : EShape;
 	shapeSize : float;
+	scoreAmount: s32;
 	color: Vector4;
 	cacheColor: Vector4;
 	damage: float;
 	health: float;
+	stamina: float;
 	originalHealth: float;
 	damageAnimTimer: float;
 	remainingLifetime: float;
