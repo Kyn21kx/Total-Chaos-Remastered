@@ -3,12 +3,12 @@
 #import "Input";
 #import "Math";
 #import "System";
-#import "Sound_Player";
 #import "File";
 #import "String";
 #load "draw_utils.jai";
 #load "entity.jai";
 #load "random_utils.jai";
+using Sound :: #import "Sound_Player"(VERBOSE = false);
 
 SpawnPoint :: enum u8 {
 	Top;
@@ -49,6 +49,7 @@ PLAYER_SWEEP_ANIMATION_TIME :: 0.2;
 ENEMY_BULLET_COLLISION_MASK : EEntityType : .Player | .Bullet;
 
 ENEMY_SHOOT_COOLDOWN_S :: 3.0;
+ENEMY_SHOOT_PREPARATION_S :: 0.5;
 
 // TBD
 PLAYER_SHOOT_COOLDOWN_S :: 1.0;
@@ -64,6 +65,11 @@ g_timeScaleCache: float = 1;
 g_restoreTimeScaleAfter: float = 0;
 g_staminaUnchangedTimer: float = 0;
 g_font: *Simp.Dynamic_Font;
+
+g_music: Sound_Data;
+g_pauseMusic: Sound_Data;
+g_audioStream: *Sound_Stream;
+g_pauseStream: *Sound_Stream;
 
 g_enemySpawnTimer : float64 = 0;
 
@@ -107,6 +113,9 @@ DrawEntity :: (entity: *Entity) {
 	else if (entity.shape == .Triangle) {
 		DrawTriangle(entity.position, entity.shapeSize, entity.rotation, entity.color);
 	}
+	else if (entity.shape == .Square) {
+		DrawRect(entity.position, Vector2.{entity.shapeSize, entity.shapeSize}, entity.color);
+	}
 }
 
 CalculateRandomSpawnPoint :: (outSpawnPoint: *SpawnPoint) -> Vector2 {
@@ -141,6 +150,22 @@ DrawUI :: (delta: float) {
 	    Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx ((height / 2) * 0.9), color);
 	    text_width = Simp.prepare_text(g_font, "Quit");
 	    Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx ((height / 2) * 0.8), color);
+
+	    g_audioStream.user_flags |= .PAUSED_DUE_TO_MENU;
+        g_audioStream.current_rate = 0;
+
+        if (g_pauseStream.user_flags & .PAUSED_DUE_TO_MENU) {
+	    	g_pauseStream.current_rate = g_audioStream.desired_rate;
+	        g_pauseStream.user_flags &= ~.PAUSED_DUE_TO_MENU;
+        }
+        
+    }
+    else if (g_audioStream.user_flags & .PAUSED_DUE_TO_MENU) {
+    	g_audioStream.current_rate = g_audioStream.desired_rate;
+        g_audioStream.user_flags &= ~.PAUSED_DUE_TO_MENU;
+
+	    g_pauseStream.user_flags |= .PAUSED_DUE_TO_MENU;
+	    g_pauseStream.current_rate = 0;
     }
     
 }
@@ -271,13 +296,39 @@ ShootBullet :: (position: Vector2, shootDir: Vector2, color: Vector4, collisionM
 	AddEntity(bullet);
 }
 
-EnemyShoot :: (entity: *Entity) {
+EnemyShoot :: (entity: *Entity, delta: float) {
 	// Get the direction of the player
-	if (entity.type != .Enemy || entity.shootCooldownTimer > 0 || !RandChance(1, 3)) return;
+	if (entity.type != .Enemy) return;
+
+	if (entity.shootAnimTimer > 0) {
+		entity.shootAnimTimer -= delta;
+
+		// Lerp towards orange
+		entity.color = lerp(entity.cacheColor, Vector4.{0.969, 0.39, 0.15, 1}, entity.shootAnimTimer / ENEMY_SHOOT_PREPARATION_S);
+		entity.color.w = 1.0;
+		
+		if (entity.shootAnimTimer <= 0) {
+			if (entity.flags & .CanMultiShoot) {
+				ShootBullet(entity.position + VEC2_LEFT, VEC2_RIGHT, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+				ShootBullet(entity.position + VEC2_RIGHT, VEC2_LEFT, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+			}
+			else {
+				shootDir := normalize(g_entities[g_playerId].position - entity.position);
+				ShootBullet(entity.position, shootDir, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+			}
+			entity.shootCooldownTimer = ENEMY_SHOOT_COOLDOWN_S;
+			entity.color = Vector4.{1, 1, 1, 1}; // Default enemy color
+		}
+		
+		return;
+	}
 	
-	shootDir := normalize(g_entities[g_playerId].position - entity.position);
-	ShootBullet(entity.position, shootDir, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
-	entity.shootCooldownTimer = ENEMY_SHOOT_COOLDOWN_S;
+	if (entity.shootCooldownTimer > 0 || !RandChance(1, 3)) return;
+
+	// Prepare to shoot
+	entity.shootAnimTimer = ENEMY_SHOOT_PREPARATION_S;
+	entity.cacheColor = entity.color;
+	
 }
 
 PlayerShoot :: (entity: *Entity) {
@@ -428,7 +479,7 @@ OnDamaged :: (entity: *Entity, damageSrc: *Entity) -> bool {
 }
 
 OnRecoverFromDamage :: (entity: *Entity) {
-	entity.color = lerp(entity.cacheColor, Vector4.{0, 0, 0, 0}, entity.health / DEFAULT_ENEMY_HEALTH);
+	entity.color = Vector4.{1, 1, 1, 1};
 }
 
 HandleKnockback :: (entity: *Entity, delta: float) {
@@ -616,7 +667,7 @@ Update :: () {
 		
 		HandleCooldownTimers(*entity, current_dt);
 		HandleSpecialStates(*entity, current_dt);
-		EnemyShoot(*entity);
+		EnemyShoot(*entity, current_dt);
 		HandleAnimations(*entity, current_dt);
 		ApplyMovement(*entity, current_dt);
 		HealthSystem(*entity, current_dt);
@@ -630,16 +681,26 @@ DEFAULT_ENEMY_SIZE_PX :: 25;
 DEFAULT_ENEMY_SCORE :: 5;
 
 CreateEnemy :: (position: Vector2) -> Entity {
+	shape := EShape.Triangle;
+	flags := EEntityFlags.None;
+	health := DEFAULT_ENEMY_HEALTH;
+	if (RandChance(1, 10)) {
+		// Creates an AOE enemy
+		flags |= .CanMultiShoot | .ExplodeOnDeath;
+		shape = .Square;
+		health *= 2;
+	}
 	result := Entity.{
 		position = position,
 		speed = DEFAULT_ENEMY_SPEED,
-		shape = .Triangle,
+		shape = shape,
 		shapeSize = DEFAULT_ENEMY_SIZE_PX,
 		color = Vector4.{1, 1, 1, 1},
-		health = DEFAULT_ENEMY_HEALTH,
-		originalHealth = DEFAULT_ENEMY_HEALTH,
+		health = health,
+		originalHealth = health,
 		shootCooldownTimer = ENEMY_SHOOT_COOLDOWN_S,
 		scoreAmount = DEFAULT_ENEMY_SCORE,
+		flags = flags,
 		type = .Enemy
 	};
 	return result;
@@ -656,9 +717,32 @@ AddEntity :: (entity: Entity) -> s64 {
 InitResources :: () {
     path := path_strip_filename(get_path_of_running_executable());
     set_working_directory(path);
+    g_music = load_audio_file("assets/audio/Contact_Trimmed.wav");
+    if (!g_music.loaded) {
+    	print("Failed to load music!");
+    	exit(1);
+    }
+    
+    devices := get_devices();
+    success := sound_player_init(.{});
+    assert(success);
+
+    g_audioStream = make_stream(*g_music, .MUSIC);
+    set_repeating(g_audioStream, true);
+    start_playing(g_audioStream);
+    
+    g_pauseMusic = load_audio_file("assets/audio/Rtho_LowPass.wav");
+    g_pauseStream = make_stream(*g_pauseMusic, .MUSIC);
+    set_repeating(g_pauseStream, true);
+    start_playing(g_pauseStream);
+
+    g_pauseStream.user_flags |= .PAUSED_DUE_TO_MENU;
+    g_pauseStream.current_rate = 0;
+
     g_font = Simp.get_font_at_size("assets/fonts/Nova_Square", "NovaSquare-Regular.ttf", 24);
     if (!g_font) {
     	print("Failed to load font!");
+    	exit(1);
     }
 }
 
@@ -707,8 +791,11 @@ main :: () {
         Update();
 
         // render_post_process();
+        Sound.update();
         Simp.swap_buffers(window);
 	}
+
+	sound_player_shutdown();
     
 }
 

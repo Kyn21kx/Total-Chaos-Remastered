@@ -16,6 +16,7 @@ EShape :: enum u16 {
 	None;
 	Circle;
 	Triangle;
+	Square;
 }
 
 EEffectState :: enum u16 {
@@ -23,6 +24,13 @@ EEffectState :: enum u16 {
 	Parry;
 	Damaged;
 	Knockback;
+}
+
+EEntityFlags :: enum u16 {
+	None;
+	ExplodeOnDeath;
+	CanMultiShoot;
+	ShouldFollowPlayer;
 }
 
 DEFAULT_COLLISION_MASK : EEntityType : .CollisionEnabledLayer;
@@ -55,10 +63,12 @@ Entity :: struct {
 	remainingLifetime: float;
 	initialLifetime: float;
 	shootCooldownTimer: float;
+	shootAnimTimer: float;
 	parryAnimTimer: float; // Anim time doubles as cooldown
 	parryPressedTime: float;
 
 	collisionMask: EEntityType = DEFAULT_COLLISION_MASK;
 
+	flags: EEntityFlags;
 	type : EEntityType;
 }
