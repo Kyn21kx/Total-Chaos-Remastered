@@ -41,6 +41,47 @@ DrawRect :: (position: Vector2, size: Vector2, color: Vector4) {
     Simp.immediate_quad(position.x, position.y, position.x + size.x, position.y + size.y, color);
 }
 
+
+DrawRect :: (position: Vector2, size: Vector2, color: Vector4, angle: float) {
+    half_w := size.x / 2.0;
+    half_h := size.y / 2.0;
+
+    // Define corners relative to center
+    corners := Vector2.[
+        .{-half_w, -half_h},  // bottom left
+        .{ half_w, -half_h},  // bottom right
+        .{ half_w,  half_h},  // top right
+        .{-half_w,  half_h},  // top left
+    ];
+
+    // Rotate and translate each corner
+    ca := cos(angle);
+    sa := sin(angle);
+
+    rotated : [4] Vector2;
+    for i : 0..3 {
+        p := corners[i];
+        rotated[i] = .{
+            position.x + p.x * ca - p.y * sa,
+            position.y + p.x * sa + p.y * ca,
+        };
+    }
+
+    // Draw as two triangles
+    Simp.set_shader_for_color(true);
+    Simp.immediate_triangle(
+        .{rotated[0].x, rotated[0].y, 0},
+        .{rotated[1].x, rotated[1].y, 0},
+        .{rotated[2].x, rotated[2].y, 0},
+        color, color, color
+    );
+    Simp.immediate_triangle(
+        .{rotated[0].x, rotated[0].y, 0},
+        .{rotated[2].x, rotated[2].y, 0},
+        .{rotated[3].x, rotated[3].y, 0},
+        color, color, color
+    );
+}
 DrawTriangle :: (center: Vector2, size: float, angle: float, color: Vector4) {
     // Define the three points of the triangle relative to center
     // Pointing up by default

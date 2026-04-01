@@ -72,6 +72,7 @@ g_audioStream: *Sound_Stream;
 g_pauseStream: *Sound_Stream;
 
 g_enemySpawnTimer : float64 = 0;
+g_enemyCount: s32 = 0;
 
 g_debugMousePtrEntityId := -1;
 g_playerId := -1;
@@ -80,8 +81,10 @@ g_scoreBlendTimer : float = 0;
 g_score : int = 0;
 g_prevScore : int = 0;
 
-width := 1080;
-height := 720;
+width := 1920;
+height := 1080;
+
+MAX_ENEMIES_ON_SCREEN :: 10;
 
 current_dt: float = 0.016667;
 last_time:  float64;
@@ -104,8 +107,6 @@ RAD_TO_DEG :: 180 / PI;
 
 DEG_TO_RAD :: PI / 180;
 
-
-
 DrawEntity :: (entity: *Entity) {
 	if (entity.shape == .Circle) {
 		DrawCircle(entity.position, entity.shapeSize, entity.color);
@@ -114,7 +115,13 @@ DrawEntity :: (entity: *Entity) {
 		DrawTriangle(entity.position, entity.shapeSize, entity.rotation, entity.color);
 	}
 	else if (entity.shape == .Square) {
-		DrawRect(entity.position, Vector2.{entity.shapeSize, entity.shapeSize}, entity.color);
+		pos := entity.position;
+		pos.x -= entity.shapeSize / 2;
+		if (entity.rotation != 0) {
+			DrawRect(pos, Vector2.{entity.shapeSize, entity.shapeSize}, entity.color, entity.rotation);
+			return;
+		}
+		DrawRect(pos, Vector2.{entity.shapeSize, entity.shapeSize}, entity.color);
 	}
 }
 
@@ -191,7 +198,7 @@ SpawnPointDefaultTravelDir :: (spawnPosition: SpawnPoint, entity: *Entity) -> Ve
 // This will spawn if some time and probability is met
 SpawnEntities :: (delta: float64) {
 	g_enemySpawnTimer += delta;
-	if (g_enemySpawnTimer >= ENEMY_SPAWN_TIME_THRESHOLD_IN_SECONDS) {
+	if (g_enemyCount < MAX_ENEMIES_ON_SCREEN && g_enemySpawnTimer >= ENEMY_SPAWN_TIME_THRESHOLD_IN_SECONDS && RandChance(1, 2)) {
 		spawnPointGuide : SpawnPoint;
 		randomPosition := CalculateRandomSpawnPoint(*spawnPointGuide);
 		enemy := CreateEnemy(randomPosition);
@@ -296,6 +303,25 @@ ShootBullet :: (position: Vector2, shootDir: Vector2, color: Vector4, collisionM
 	AddEntity(bullet);
 }
 
+ShootShard :: (position: Vector2, shootDir: Vector2) {
+	bullet := Entity.{
+		type = .Bullet,
+		position = position,
+		speed = DEFAULT_BULLET_SPEED * 0.2,
+		shape = .Square,
+		shapeSize = DEFAULT_BULLET_SIZE_PX * 1.5,
+		color = Vector4.{0, 1, 0, 1},
+		damage = DEFAULT_BULLET_DAMAGE,
+		velocity = shootDir,
+		rotationVelocity = 2,
+		initialLifetime = 3,
+		remainingLifetime = 3,
+		collisionMask = .Enemy
+	};
+	
+	AddEntity(bullet);
+}
+
 EnemyShoot :: (entity: *Entity, delta: float) {
 	// Get the direction of the player
 	if (entity.type != .Enemy) return;
@@ -309,8 +335,11 @@ EnemyShoot :: (entity: *Entity, delta: float) {
 		
 		if (entity.shootAnimTimer <= 0) {
 			if (entity.flags & .CanMultiShoot) {
-				ShootBullet(entity.position + VEC2_LEFT, VEC2_RIGHT, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
-				ShootBullet(entity.position + VEC2_RIGHT, VEC2_LEFT, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+				SHOOT_POS_OFFSET :: 20.0;
+				ShootBullet(entity.position + (VEC2_RIGHT * SHOOT_POS_OFFSET), VEC2_RIGHT, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+				ShootBullet(entity.position + (VEC2_LEFT * SHOOT_POS_OFFSET), VEC2_LEFT, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+				ShootBullet(entity.position + (VEC2_UP * SHOOT_POS_OFFSET), VEC2_UP, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+				ShootBullet(entity.position + (VEC2_DOWN * SHOOT_POS_OFFSET), VEC2_DOWN, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
 			}
 			else {
 				shootDir := normalize(g_entities[g_playerId].position - entity.position);
@@ -336,7 +365,7 @@ PlayerShoot :: (entity: *Entity) {
 		return;
 	}
 	shootDir := normalize(g_mousePosition - entity.position);
-	ShootBullet(entity.position, shootDir, PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED);
+	ShootBullet(entity.position, shootDir, PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
 	entity.stamina -= STAMINA_PER_BULLET;
 	g_staminaUnchangedTimer	= STAMINA_FADE_THRESHOLD_TIME;
 }
@@ -580,8 +609,15 @@ HealthSystem :: (entity: *Entity, delta: float) {
 	}
 	
 	if (entity.health <= 0) {
+		if (entity.flags & .ExplodeOnDeath) {
+			// Spawn some bullets that are our own
+			for i : 0..12 {
+				ShootShard(entity.position, RotateVec2(entity.velocity, cast(float)i * 30.0));
+			} 
+		}
 		if (entity.type == .Enemy) {
 			IncreaseScore(entity.scoreAmount);
+			g_enemyCount -= 1;
 		}
 		entity.type = .None;
 		return;
@@ -684,7 +720,7 @@ CreateEnemy :: (position: Vector2) -> Entity {
 	shape := EShape.Triangle;
 	flags := EEntityFlags.None;
 	health := DEFAULT_ENEMY_HEALTH;
-	if (RandChance(1, 10)) {
+	if (RandChance(1, 7)) {
 		// Creates an AOE enemy
 		flags |= .CanMultiShoot | .ExplodeOnDeath;
 		shape = .Square;
@@ -703,6 +739,7 @@ CreateEnemy :: (position: Vector2) -> Entity {
 		flags = flags,
 		type = .Enemy
 	};
+	g_enemyCount += 1;
 	return result;
 }
 
@@ -729,6 +766,8 @@ InitResources :: () {
 
     g_audioStream = make_stream(*g_music, .MUSIC);
     set_repeating(g_audioStream, true);
+    g_audioStream.user_volume_scale = 0.5;
+    
     start_playing(g_audioStream);
     
     g_pauseMusic = load_audio_file("assets/audio/Rtho_LowPass.wav");
