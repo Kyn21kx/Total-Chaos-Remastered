@@ -27,10 +27,15 @@ EEffectState :: enum u16 {
 }
 
 EEntityFlags :: enum u16 {
-	None;
-	ExplodeOnDeath;
-	CanMultiShoot;
-	ShouldFollowPlayer;
+	None :: 0;
+	ExplodeOnDeath :: 1;
+	CanMultiShoot :: 2;
+	ShouldFollowPlayer :: 4;
+
+	// Power ups
+	HasShield :: 8;
+	HasBomb :: 16;
+	
 }
 
 DEFAULT_COLLISION_MASK : EEntityType : .CollisionEnabledLayer;

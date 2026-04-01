@@ -17,6 +17,7 @@ SpawnPoint :: enum u8 {
 	Right;
 }
 
+SLOW_TIME_SCALE :: 0.3;
 DEFAULT_PLAYER_COLOR :: Vector4.{3 / 255.0, 211 / 255.0, 252 / 255.0, 1};
 DEFAULT_PLAYER_SIZE_PX :: 25;
 
@@ -81,6 +82,11 @@ g_scoreBlendTimer : float = 0;
 g_score : int = 0;
 g_prevScore : int = 0;
 
+
+g_cameraOffset := Vector2.{0, 0};
+g_shakeStrength: float = 0;
+g_shakeTime: float = 0;
+
 width := 1920;
 height := 1080;
 
@@ -107,21 +113,41 @@ RAD_TO_DEG :: 180 / PI;
 
 DEG_TO_RAD :: PI / 180;
 
+SHAKE_MAX_OFFSET :: 20.0;
+SHAKE_DECAY      :: 0.05;
+
+UpdateShake :: (delta: float) {
+    if g_shakeStrength > 0 {
+        g_shakeTime += delta * 20.0;
+        g_shakeStrength  =  max(0.0, g_shakeStrength - SHAKE_DECAY * delta);
+
+        magnitude := g_shakeStrength * g_shakeStrength;  // squaring gives nicer feel
+        g_cameraOffset.x = sin(g_shakeTime * 1.1) * magnitude * SHAKE_MAX_OFFSET;
+        g_cameraOffset.y = cos(g_shakeTime * 0.9) * magnitude * SHAKE_MAX_OFFSET;
+    } else {
+        g_cameraOffset = .{0, 0};
+    }
+}
+
+IsGameOver :: () -> bool {
+	return g_entities[g_playerId].type == .None;
+}
+	
 DrawEntity :: (entity: *Entity) {
 	if (entity.shape == .Circle) {
-		DrawCircle(entity.position, entity.shapeSize, entity.color);
+		DrawCircle(entity.position + g_cameraOffset, entity.shapeSize, entity.color);
 	}
 	else if (entity.shape == .Triangle) {
-		DrawTriangle(entity.position, entity.shapeSize, entity.rotation, entity.color);
+		DrawTriangle(entity.position + g_cameraOffset, entity.shapeSize, entity.rotation, entity.color);
 	}
 	else if (entity.shape == .Square) {
-		pos := entity.position;
-		pos.x -= entity.shapeSize / 2;
-		if (entity.rotation != 0) {
-			DrawRect(pos, Vector2.{entity.shapeSize, entity.shapeSize}, entity.color, entity.rotation);
-			return;
-		}
-		DrawRect(pos, Vector2.{entity.shapeSize, entity.shapeSize}, entity.color);
+		// pos := entity.position + g_cameraOffset;
+		// pos.x -= entity.shapeSize / 2;
+		// if (entity.rotation != 0) {
+		DrawRect(entity.position + g_cameraOffset, Vector2.{entity.shapeSize, entity.shapeSize}, entity.color, entity.rotation);
+			// return;
+		// }
+		// DrawRect(pos, Vector2.{entity.shapeSize, entity.shapeSize}, entity.color);
 	}
 }
 
@@ -149,6 +175,12 @@ DrawUI :: (delta: float) {
 
     color  := Vector4.{0.5, 0.8, 0.2, 1};
     Simp.draw_prepared_text(g_font, xx (width / 2), xx (height * 0.9), color);
+    
+    if (IsGameOver()) {
+	    text_width = Simp.prepare_text(g_font, "GAME OVER!");
+	    Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx (height / 2), color);
+    	return;
+    }
 
     if (g_isPaused) {
 	    text_width = Simp.prepare_text(g_font, "GAME PAUSED!");
@@ -174,6 +206,7 @@ DrawUI :: (delta: float) {
 	    g_pauseStream.user_flags |= .PAUSED_DUE_TO_MENU;
 	    g_pauseStream.current_rate = 0;
     }
+
     
 }
 
@@ -403,9 +436,10 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 	if (first.type == .Player && second.type == .Bullet) {
 		if (OnDamaged(first, second)) {
 			first.health -= second.damage;
+			g_shakeStrength = 0.5;
 		}
 		else {
-			g_timeScale = 0.3;
+			g_timeScale = SLOW_TIME_SCALE;
 			g_restoreTimeScaleAfter = 0.5;
 		}
 		second.type = .None;
@@ -434,6 +468,12 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 	}
 }
 
+DropLoot :: () {
+	entity := Entity.{
+		
+	};
+}
+	
 CollisionSystem :: (entity: *Entity) {
 	// Collision layer is not applied to this entity
 	if ((entity.type & EEntityType.CollisionEnabledLayer) == 0) {
@@ -607,9 +647,11 @@ HealthSystem :: (entity: *Entity, delta: float) {
 	if (entity.type != .Enemy && entity.type != .Player) {
 		return;
 	}
-	
+
 	if (entity.health <= 0) {
 		if (entity.flags & .ExplodeOnDeath) {
+			g_timeScale = SLOW_TIME_SCALE;
+			g_restoreTimeScaleAfter = 0.5;
 			// Spawn some bullets that are our own
 			for i : 0..12 {
 				ShootShard(entity.position, RotateVec2(entity.velocity, cast(float)i * 30.0));
@@ -688,7 +730,11 @@ Update :: () {
 	
 	SpawnEntities(delta);
 	for entity : g_entities {
+		if (IsGameOver()) {
+			g_timeScale = 0.1;
+		}
 		if (entity.type == .None) continue;
+		UpdateShake(current_dt);
 		DrawEntity(*entity);
 		DrawHealthBar(*entity, current_dt);
 		DrawStaminaBar(*entity, current_dt);
