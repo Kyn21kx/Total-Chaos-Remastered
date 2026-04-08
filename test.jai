@@ -66,6 +66,12 @@ g_timeScaleCache: float = 1;
 g_restoreTimeScaleAfter: float = 0;
 g_staminaUnchangedTimer: float = 0;
 g_font: *Simp.Dynamic_Font;
+g_additionalTexelOffset: float = 1;
+g_restoreTexelOffsetAfter: float = 0;
+
+g_sceneTexture: *Simp.Texture;
+g_bloomTempPass: *Simp.Texture;
+g_window: Window_Type;
 
 g_music: Sound_Data;
 g_pauseMusic: Sound_Data;
@@ -219,6 +225,15 @@ RestoreTimeScaleSystem :: (unscaledDelta: float) {
 	g_timeScale = 1;
 }
 
+RestoreTexelOffsetSystem :: (delta: float) {
+	if (g_isPaused) return;
+	if (g_restoreTexelOffsetAfter > 0) {
+		g_restoreTexelOffsetAfter -= delta;
+		return;
+	}
+	g_additionalTexelOffset = 1;
+}
+
 SpawnPointDefaultTravelDir :: (spawnPosition: SpawnPoint, entity: *Entity) -> Vector2 {
 	if #complete spawnPosition == {
 		case .Top; return VEC2_DOWN;
@@ -323,6 +338,7 @@ ShootBullet :: (position: Vector2, shootDir: Vector2, color: Vector4, collisionM
 		type = .Bullet,
 		position = position,
 		speed = speed,
+		flags = .HasLifetime,
 		shape = .Circle,
 		shapeSize = DEFAULT_BULLET_SIZE_PX,
 		color = color,
@@ -342,6 +358,7 @@ ShootShard :: (position: Vector2, shootDir: Vector2) {
 		position = position,
 		speed = DEFAULT_BULLET_SPEED * 0.2,
 		shape = .Square,
+		flags = .HasLifetime,
 		shapeSize = DEFAULT_BULLET_SIZE_PX * 1.5,
 		color = Vector4.{0, 1, 0, 1},
 		damage = DEFAULT_BULLET_DAMAGE,
@@ -350,6 +367,25 @@ ShootShard :: (position: Vector2, shootDir: Vector2) {
 		initialLifetime = 3,
 		remainingLifetime = 3,
 		collisionMask = .Enemy
+	};
+	
+	AddEntity(bullet);
+}
+
+EnemyDeathParticleVFX :: (position: Vector2, shootDir: Vector2) {
+	bullet := Entity.{
+		type = .VFX,
+		position = position,
+		speed = DEFAULT_BULLET_SPEED * 0.05,
+		shape = .Triangle,
+		flags = .HasLifetime,
+		shapeSize = DEFAULT_BULLET_SIZE_PX,
+		color = Vector4.{0.3, 0.3, 0.3, 1},
+		velocity = shootDir,
+		rotationVelocity = 3,
+		initialLifetime = 1,
+		remainingLifetime = 1,
+		collisionMask = .None
 	};
 	
 	AddEntity(bullet);
@@ -419,6 +455,7 @@ IncreaseScore :: (diff: int) {
 		g_prevScore = g_score;
 		g_scoreBlendTimer = 1;
 	}
+	if (IsGameOver()) return;
 	g_score += diff;
 }
 	
@@ -437,6 +474,8 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 		if (OnDamaged(first, second)) {
 			first.health -= second.damage;
 			g_shakeStrength = 0.5;
+			g_additionalTexelOffset = 3.0;
+			g_restoreTexelOffsetAfter = 0.2;
 		}
 		else {
 			g_timeScale = SLOW_TIME_SCALE;
@@ -649,16 +688,21 @@ HealthSystem :: (entity: *Entity, delta: float) {
 	}
 
 	if (entity.health <= 0) {
-		if (entity.flags & .ExplodeOnDeath) {
-			g_timeScale = SLOW_TIME_SCALE;
-			g_restoreTimeScaleAfter = 0.5;
-			// Spawn some bullets that are our own
-			for i : 0..12 {
-				ShootShard(entity.position, RotateVec2(entity.velocity, cast(float)i * 30.0));
-			} 
-		}
 		if (entity.type == .Enemy) {
 			IncreaseScore(entity.scoreAmount);
+			// Normal animation
+			if (entity.flags & .ExplodeOnDeath) {
+				g_timeScale = SLOW_TIME_SCALE;
+				g_restoreTimeScaleAfter = 0.5;
+				for i : 0..12 {
+					ShootShard(entity.position, RotateVec2(entity.velocity, cast(float)i * 30.0));
+				}
+			}
+			else {
+				for i : 0..6 {
+					EnemyDeathParticleVFX(entity.position, RotateVec2(entity.velocity, RandFloatInRange(0, 360)));
+				}
+			}
 			g_enemyCount -= 1;
 		}
 		entity.type = .None;
@@ -667,7 +711,7 @@ HealthSystem :: (entity: *Entity, delta: float) {
 }
 
 FadeEntityOverTime :: (entity: *Entity, delta: float64) {
-	if (entity.type != .Bullet) {
+	if !(entity.flags & .HasLifetime) {
 		return;
 	}
 	if (entity.remainingLifetime <= 0) {
@@ -722,16 +766,17 @@ Update :: () {
 	// DebugEntities();
 
 
-	
 	InputSystem();
 	
 	
 	RestoreTimeScaleSystem(cast(float)unscaledDelta);
-	
+	RestoreTexelOffsetSystem(current_dt);
+
 	SpawnEntities(delta);
 	for entity : g_entities {
 		if (IsGameOver()) {
 			g_timeScale = 0.1;
+			g_additionalTexelOffset = 10.0;
 		}
 		if (entity.type == .None) continue;
 		UpdateShake(current_dt);
@@ -831,13 +876,44 @@ InitResources :: () {
     }
 }
 
+InitRenderingPipeline :: () {
+    Simp.set_render_target(g_window);
+    Simp.clear_render_target(.15, .08, .08, 1);
+	g_sceneTexture = Simp.texture_create_render_target(xx width, xx height, .RGBA8);
+	g_bloomTempPass = Simp.texture_create_render_target(xx width, xx height, .RGBA8);
+}
+
+DrawFrameBegin :: () {
+	// Draw the scene to the texture
+	Simp.set_render_target(g_sceneTexture);
+	Simp.set_shader_for_color(true);
+    Simp.clear_render_target(.0, .01, .03, 1);
+    
+}
+
+DrawFrameEnd :: () {
+	Simp.set_render_target(g_bloomTempPass);
+    Simp.clear_render_target(0, 0, 0, 0);
+
+    Simp.set_shader_for_images(g_sceneTexture);
+    Simp.set_uniform_float_for_images("pass_direction", 1.0);
+    Simp.set_uniform_float_for_images("additional_offset", g_additionalTexelOffset);
+
+    Simp.immediate_quad(0, 0, xx width, xx height, Vector4.{1,1,1,1});	
+    Simp.set_render_target(g_window);
+    Simp.clear_render_target(.0, .01, .03, 1);
+
+	Simp.set_shader_for_images(g_sceneTexture);
+	Simp.set_uniform_float_for_images("pass_direction", 0.0);
+	Simp.set_uniform_float_for_images("additional_offset", g_additionalTexelOffset);
+    Simp.immediate_quad(0, 0, xx width, xx height, Vector4.{1,1,1,1});
+}
+
 main :: () {
 	last_time = seconds_since_init();	
-	window := create_window(window_name="TotalChaos Remastered", width=width, height=height);	
-	// GL.gl_load(*GL.gl);
-    Simp.set_render_target(window);
-	// create_post_process_resources();
-	// GL.glViewport(0, 0, cast(s32)width, cast(s32)height);    
+	g_window = create_window(window_name="TotalChaos Remastered", width=width, height=height);	
+	InitRenderingPipeline();
+
     // Create the player
     player := Entity.{
 		type = .Player,
@@ -869,15 +945,15 @@ main :: () {
 		// GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, scene_fbo);		
 		// GL.glViewport(0, 0, cast(u32)width, cast(u32)height);	    
 		
-		Simp.set_shader_for_color(true);
 		// GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, scene_fbo);		
 
-        Simp.clear_render_target(.2, .3, .3, 1);
+		DrawFrameBegin();
         Update();
+        DrawFrameEnd();
 
         // render_post_process();
         Sound.update();
-        Simp.swap_buffers(window);
+        Simp.swap_buffers(g_window);
 	}
 
 	sound_player_shutdown();

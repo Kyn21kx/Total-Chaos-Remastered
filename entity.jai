@@ -8,6 +8,7 @@ EEntityType :: enum u16 {
 	Enemy :: 4;
 	Bullet :: 8;
 	Pickup :: 16;
+	VFX :: 32;
 
 	CollisionEnabledLayer :: Player | Enemy | Bullet | Pickup;
 }
@@ -32,9 +33,11 @@ EEntityFlags :: enum u16 {
 	CanMultiShoot :: 2;
 	ShouldFollowPlayer :: 4;
 
+	HasLifetime :: 8;
+
 	// Power ups
-	HasShield :: 8;
-	HasBomb :: 16;
+	HasShield :: 16;
+	HasBomb :: 32;
 	
 }
 
