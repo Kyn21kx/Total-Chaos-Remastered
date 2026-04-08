@@ -34,6 +34,8 @@ SUCCESSFUL_PARRY_WINDOW_S :: 0.3;
 DEFAULT_ENEMY_HEALTH :: DEFAULT_HEALTH * 2;
 PLAYER_BULLET_COLOR :: Vector4.{0, 0.2, 1, 1};
 
+POWER_UP_COLOR :: Vector4.{0.8, 0.0, 0.4, 1};
+
 ENEMY_SPAWN_TIME_THRESHOLD_IN_SECONDS : float64 : 2;
 RECOVER_FROM_DMG_TIME_S : float : 0.2;
 
@@ -507,10 +509,15 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 	}
 }
 
-DropLoot :: () {
+DropLoot :: (position: Vector2) {
 	entity := Entity.{
-		
+		color = POWER_UP_COLOR,
+		shape = .Square,
+		shapeSize = DEFAULT_ENEMY_SIZE_PX,
+		position = position,
+		type = .Pickup
 	};
+	AddEntity(entity);
 }
 	
 CollisionSystem :: (entity: *Entity) {
@@ -690,6 +697,11 @@ HealthSystem :: (entity: *Entity, delta: float) {
 	if (entity.health <= 0) {
 		if (entity.type == .Enemy) {
 			IncreaseScore(entity.scoreAmount);
+
+			if (RandChance(1, 10)) {
+				DropLoot(entity.position);
+			}
+
 			// Normal animation
 			if (entity.flags & .ExplodeOnDeath) {
 				g_timeScale = SLOW_TIME_SCALE;
