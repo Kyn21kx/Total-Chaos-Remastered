@@ -36,6 +36,51 @@ DrawCircle :: (center: Vector2, radius: float, color: Vector4, segments: int = 3
     }
 }
 
+
+DrawGradientCircle :: (center: Vector2, radius: float, color: Vector4, segments: int = 32) {
+    Simp.set_shader_for_color(true);
+    step := (2.0 * PI) / cast(float) segments;
+
+    innerRadius := radius * 0.7;
+    outerColor  := color;
+    innerColor  := Vector4.{color.x, color.y, color.z, 0.0};
+
+    for i : 0..segments-1 {
+        angle0 := step * cast(float) i;
+        angle1 := step * cast(float) (i + 1);
+
+        // Outer ring points
+        ox0 := center.x + cos(angle0) * radius;
+        oy0 := center.y + sin(angle0) * radius;
+        ox1 := center.x + cos(angle1) * radius;
+        oy1 := center.y + sin(angle1) * radius;
+
+        // Inner ring points
+        ix0 := center.x + cos(angle0) * innerRadius;
+        iy0 := center.y + sin(angle0) * innerRadius;
+        ix1 := center.x + cos(angle1) * innerRadius;
+        iy1 := center.y + sin(angle1) * innerRadius;
+
+        // Outer quad (two triangles) — outer solid, inner transparent
+        Simp.immediate_triangle(
+            .{ox0, oy0, 0},
+            .{ox1, oy1, 0},
+            .{ix0, iy0, 0},
+            outerColor,
+            outerColor,
+            innerColor
+        );
+        Simp.immediate_triangle(
+            .{ox1, oy1, 0},
+            .{ix1, iy1, 0},
+            .{ix0, iy0, 0},
+            outerColor,
+            innerColor,
+            innerColor
+        );
+    }
+}
+
 DrawRect :: (position: Vector2, size: Vector2, color: Vector4) {
     Simp.set_shader_for_color(true);
     Simp.immediate_quad(position.x, position.y, position.x + size.x, position.y + size.y, color);

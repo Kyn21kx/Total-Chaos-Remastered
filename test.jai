@@ -22,6 +22,7 @@ SLOW_TIME_SCALE :: 0.3;
 DEFAULT_PLAYER_COLOR :: Vector4.{3 / 255.0, 211 / 255.0, 252 / 255.0, 1};
 DEFAULT_PLAYER_SIZE_PX :: 25;
 
+BOMB_RADIUS :: 600;
 DEFAULT_BULLET_SPEED : float : 1000; 
 DEFAULT_PICKUP_SPEED : float : 100;
 PICKUP_LIFETIME :: 10;
@@ -66,7 +67,6 @@ ENTITY_MAX_COUNT :: 2048;
 g_shouldQuitGame := false;
 g_entities : [ENTITY_MAX_COUNT] Entity;
 g_availableEntities: Queue(s64);
-g_entityIndex := 0;
 g_mousePosition: Vector2;
 g_currentTime : float64 = 0;
 g_timeScale: float = 1;
@@ -89,8 +89,11 @@ g_pauseStream: *Sound_Stream;
 g_enemySpawnTimer : float64 = 0;
 g_enemyCount: s32 = 0;
 
+// Entities we need to keep a constant reference to
 g_debugMousePtrEntityId := -1;
 g_playerId := -1;
+g_bombHolderId := -1;
+
 g_isPaused := false;
 g_scoreBlendTimer : float = 0;
 g_score : int = 0;
@@ -157,6 +160,9 @@ DrawEntity :: (entity: *Entity) {
 	}
 	else if (entity.shape == .Square) {
 		DrawRect(entity.position + g_cameraOffset, Vector2.{entitySize, entitySize}, entity.color, entity.rotation);
+	}
+	else if (entity.shape == .GradientCircle) {
+		DrawGradientCircle(entity.position + g_cameraOffset, entitySize, entity.color);
 	}
 }
 
@@ -426,13 +432,13 @@ EnemyDeathParticleVFX :: (position: Vector2, shootDir: Vector2) {
 		position = position,
 		speed = DEFAULT_BULLET_SPEED * 0.05,
 		shape = .Triangle,
-		flags = .HasLifetime,
-		shapeSize = DEFAULT_BULLET_SIZE_PX,
+		flags = .HasLifetime | .DecreaseSizeOverLifeTime,
+		shapeSize = DEFAULT_BULLET_SIZE_PX * 1.5,
 		color = Vector4.{0.3, 0.3, 0.3, 1},
 		velocity = shootDir,
 		rotationVelocity = 3,
-		initialLifetime = 1,
-		remainingLifetime = 1,
+		initialLifetime = 1.5,
+		remainingLifetime = 1.5,
 		collisionMask = .None
 	};
 	
@@ -483,6 +489,28 @@ ConeVFX :: (position: Vector2, direction: Vector2, coneAngle: float = 60.0, part
 		};
 		AddEntity(bullet);
     }
+}
+
+DropBomb :: (position: Vector2) {
+	// Instantiate a big ass entity
+	entity := Entity.{
+		position = position,
+		shape = .GradientCircle,
+		color = Vector4.{0.3, 0.3, 0.3, 1},
+		shapeSize = 1.0,
+		collisionMask = .Enemy | .Bullet,
+		initialLifetime = 1,
+		remainingLifetime = 1,
+		type = .BombHolder
+	};
+	
+	g_shakeStrength = 2.0;
+	g_additionalTexelOffset = 3.0;
+	g_restoreTexelOffsetAfter = 1.5 * SLOW_TIME_SCALE;
+	
+	g_timeScale = SLOW_TIME_SCALE;
+	g_restoreTimeScaleAfter = 1.5;
+	g_bombHolderId = AddEntity(entity);
 }
 
 EnemyShoot :: (entity: *Entity, delta: float) {
@@ -554,6 +582,18 @@ IncreaseScore :: (diff: int) {
 }
 	
 HandleCollision :: (first: *Entity, second: *Entity) {
+	if (second.type == .BombHolder && first.type == .Enemy) {
+		first.health -= 9999;
+		g_timeScale = SLOW_TIME_SCALE;
+		g_restoreTimeScaleAfter += 0.2;
+	}
+	if (second.type == .BombHolder && first.type == .Bullet) {
+		RemoveEntity(first);
+	}
+	if (first.type == .BombHolder && second.type == .Bullet) {
+		RemoveEntity(second);
+	}
+	
 	if (first.type == .Bullet && second.type == .Enemy) {
 		second.health -= first.damage;
 		// Again, we should probably address entity deletion some day
@@ -670,8 +710,8 @@ CollisionSystem :: (entity: *Entity) {
 		isOtherWithinCollisionMask : bool = (other.type & entity.collisionMask) != 0 && (other.collisionMask & entity.type) != 0;
 		if (other.id == entity.id || !otherHasCollisionLayer || !isOtherWithinCollisionMask) continue;
 
-		collidesOnX := entity.position.x >= other.position.x - other.shapeSize && entity.position.x <= other.position.x + other.shapeSize;
-		collidesOnY := entity.position.y >= other.position.y - other.shapeSize && entity.position.y <= other.position.y + other.shapeSize;
+		collidesOnX := entity.position.x >= other.position.x - (other.shapeSize * other.scaleFactor) && entity.position.x <= other.position.x + (other.shapeSize * other.scaleFactor);
+		collidesOnY := entity.position.y >= other.position.y - (other.shapeSize * other.scaleFactor) && entity.position.y <= other.position.y + (other.shapeSize * other.scaleFactor);
 		
 		if (collidesOnX && collidesOnY) {
 			HandleCollision(entity, *other);
@@ -729,6 +769,18 @@ OnDamaged :: (entity: *Entity, damageSrc: *Entity) -> bool {
 		entity.state = .Damaged;
 	}
 	return true;
+}
+
+
+BombUpdate :: (entity: *Entity, delta: float) {
+	if (entity.remainingLifetime <= 0) {
+		RemoveEntity(entity);
+		return;
+	} 
+	entity.remainingLifetime -= delta;
+	// Fade the color's opacity
+	lerpingBlend := entity.remainingLifetime / entity.initialLifetime;
+	entity.scaleFactor = lerp(BOMB_RADIUS, 1.0, lerpingBlend);
 }
 
 OnRecoverFromDamage :: (entity: *Entity) {
@@ -801,6 +853,11 @@ UpdatePlayer :: (entity: *Entity, delta: float) {
 			entity.cacheColor = entity.color;
 			entity.state = .Parry;
 			entity.color = PARRY_FX_COLOR;
+		}
+		
+		if (event.key_code == .SPACEBAR && entity.flags & .HasBomb) {
+			DropBomb(entity.position);
+			entity.flags &= ~.HasBomb;
 		}
 	}
 	
@@ -956,12 +1013,15 @@ Update :: () {
 		if (g_isPaused) continue; // Only draw, do not update
 		FadeEntityOverTime(*entity, delta);
 		DecreaseEntitySizeOverTime(*entity, delta);
-		CollisionSystem(*entity);
 		
 		if (entity.type == .Player) {
 			UpdatePlayer(*entity, current_dt);
 		}
+		else if (entity.type == .BombHolder) {
+			BombUpdate(*entity, current_dt);
+		}
 		
+		CollisionSystem(*entity);
 		HandleCooldownTimers(*entity, current_dt);
 		HandleSpecialStates(*entity, current_dt);
 		EnemyShoot(*entity, current_dt);

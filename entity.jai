@@ -9,8 +9,9 @@ EEntityType :: enum u16 {
 	Bullet :: 8;
 	Pickup :: 16;
 	VFX :: 32;
+	BombHolder :: 64;
 
-	CollisionEnabledLayer :: Player | Enemy | Bullet | Pickup;
+	CollisionEnabledLayer :: Player | Enemy | Bullet | Pickup | BombHolder;
 }
 
 EShape :: enum u16 {
@@ -18,6 +19,7 @@ EShape :: enum u16 {
 	Circle;
 	Triangle;
 	Square;
+	GradientCircle;
 }
 
 EEffectState :: enum u16 {
