@@ -8,6 +8,7 @@
 #load "draw_utils.jai";
 #load "entity.jai";
 #load "random_utils.jai";
+#load "queue.jai";
 using Sound :: #import "Sound_Player"(VERBOSE = false);
 
 SpawnPoint :: enum u8 {
@@ -22,6 +23,8 @@ DEFAULT_PLAYER_COLOR :: Vector4.{3 / 255.0, 211 / 255.0, 252 / 255.0, 1};
 DEFAULT_PLAYER_SIZE_PX :: 25;
 
 DEFAULT_BULLET_SPEED : float : 1000; 
+DEFAULT_PICKUP_SPEED : float : 100;
+PICKUP_LIFETIME :: 10;
 DEFAULT_BULLET_DAMAGE : float : 10; 
 DEFAULT_HEALTH : float : 10; 
 DEFAULT_BULLET_SIZE_PX :: 20;
@@ -34,7 +37,7 @@ SUCCESSFUL_PARRY_WINDOW_S :: 0.3;
 DEFAULT_ENEMY_HEALTH :: DEFAULT_HEALTH * 2;
 PLAYER_BULLET_COLOR :: Vector4.{0, 0.2, 1, 1};
 
-POWER_UP_COLOR :: Vector4.{0.8, 0.0, 0.4, 1};
+POWER_UP_COLOR :: Vector4.{250 / 255.0, 180 / 255.0, 30 / 255.0, 1};
 
 ENEMY_SPAWN_TIME_THRESHOLD_IN_SECONDS : float64 : 2;
 RECOVER_FROM_DMG_TIME_S : float : 0.2;
@@ -58,8 +61,11 @@ ENEMY_SHOOT_PREPARATION_S :: 0.5;
 PLAYER_SHOOT_COOLDOWN_S :: 1.0;
 STAMINA_FADE_THRESHOLD_TIME :: 1.0;
 
+ENTITY_MAX_COUNT :: 2048;
+
 g_shouldQuitGame := false;
-g_entities : [2048] Entity;
+g_entities : [ENTITY_MAX_COUNT] Entity;
+g_availableEntities: Queue(s64);
 g_entityIndex := 0;
 g_mousePosition: Vector2;
 g_currentTime : float64 = 0;
@@ -142,20 +148,15 @@ IsGameOver :: () -> bool {
 }
 	
 DrawEntity :: (entity: *Entity) {
+	entitySize := entity.shapeSize * entity.scaleFactor;
 	if (entity.shape == .Circle) {
-		DrawCircle(entity.position + g_cameraOffset, entity.shapeSize, entity.color);
+		DrawCircle(entity.position + g_cameraOffset, entitySize, entity.color);
 	}
 	else if (entity.shape == .Triangle) {
-		DrawTriangle(entity.position + g_cameraOffset, entity.shapeSize, entity.rotation, entity.color);
+		DrawTriangle(entity.position + g_cameraOffset, entitySize, entity.rotation, entity.color);
 	}
 	else if (entity.shape == .Square) {
-		// pos := entity.position + g_cameraOffset;
-		// pos.x -= entity.shapeSize / 2;
-		// if (entity.rotation != 0) {
-		DrawRect(entity.position + g_cameraOffset, Vector2.{entity.shapeSize, entity.shapeSize}, entity.color, entity.rotation);
-			// return;
-		// }
-		// DrawRect(pos, Vector2.{entity.shapeSize, entity.shapeSize}, entity.color);
+		DrawRect(entity.position + g_cameraOffset, Vector2.{entitySize, entitySize}, entity.color, entity.rotation);
 	}
 }
 
@@ -172,6 +173,50 @@ CalculateRandomSpawnPoint :: (outSpawnPoint: *SpawnPoint) -> Vector2 {
 	}
 }
 
+DrawPowerUpsUI :: () {
+	prevItemPos := Vector2.{ width * 0.1, height * 0.9};
+	text: string;
+	player : *Entity = *(g_entities[g_playerId]);
+	color: Vector4;
+	spacing := width * 0.05;
+	if (player.flags & .HasBomb) {
+		text = tprint("BOMB: AVAILABLE");
+		color = Vector4.{0, 1.0, 0.1, 1.0};
+	}
+	else {
+		text = tprint("BOMB: N/A");
+		color = Vector4.{1.0, 0.0, 0.1, 1.0};
+	}
+    text_width := Simp.prepare_text(g_font, text);
+
+    Simp.draw_prepared_text(g_font, xx prevItemPos.x, xx prevItemPos.y, color);
+    prevItemPos.x += text_width + spacing;
+
+	if (player.flags & .HasShield) {
+		text = tprint("SHIELD: AVAILABLE");
+		color = Vector4.{0, 1.0, 0.1, 1.0};
+	}
+	else {
+		text = tprint("SHIELD: N/A");
+		color = Vector4.{1.0, 0.0, 0.1, 1.0};
+	}
+    text_width = Simp.prepare_text(g_font, text);
+    Simp.draw_prepared_text(g_font, xx prevItemPos.x, xx prevItemPos.y, color);
+    prevItemPos.x += text_width + spacing;
+	
+	if (player.flags & .HasShield) {
+		text = tprint("SPLIT_BULLET: ON");
+		color = Vector4.{0, 1.0, 0.1, 1.0};
+	}
+	else {
+		text = tprint("SPLIT_BULLET: N/A");
+		color = Vector4.{1.0, 0.0, 0.1, 1.0};
+	}
+    text_width = Simp.prepare_text(g_font, text);
+    Simp.draw_prepared_text(g_font, xx prevItemPos.x, xx prevItemPos.y, color);
+    prevItemPos.x += text_width + spacing;
+}
+
 DrawUI :: (delta: float) {
 	scoreBlendSpeed : float : 2;
 	if (g_scoreBlendTimer > 0) {
@@ -184,6 +229,8 @@ DrawUI :: (delta: float) {
     color  := Vector4.{0.5, 0.8, 0.2, 1};
     Simp.draw_prepared_text(g_font, xx (width / 2), xx (height * 0.9), color);
     
+	DrawPowerUpsUI();
+ 
     if (IsGameOver()) {
 	    text_width = Simp.prepare_text(g_font, "GAME OVER!");
 	    Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx (height / 2), color);
@@ -215,7 +262,6 @@ DrawUI :: (delta: float) {
 	    g_pauseStream.current_rate = 0;
     }
 
-    
 }
 
 RestoreTimeScaleSystem :: (unscaledDelta: float) {
@@ -393,6 +439,52 @@ EnemyDeathParticleVFX :: (position: Vector2, shootDir: Vector2) {
 	AddEntity(bullet);
 }
 
+BulletCollisionParticleVFX :: (position: Vector2, shootDir: Vector2) {
+	bullet := Entity.{
+		type = .VFX,
+		position = position,
+		speed = DEFAULT_BULLET_SPEED * 0.05,
+		shape = .Circle,
+		flags = .HasLifetime,
+		shapeSize = DEFAULT_BULLET_SIZE_PX * 0.2,
+		color = Vector4.{0.8, 0.9, 0.4, 1},
+		velocity = shootDir,
+		// rotationVelocity = 3,
+		initialLifetime = 1,
+		remainingLifetime = 1,
+		collisionMask = .None
+	};
+	
+	AddEntity(bullet);
+}
+
+
+ConeVFX :: (position: Vector2, direction: Vector2, coneAngle: float = 60.0, particleCount: int = 3) {
+    halfCone := coneAngle / 2.0;
+    step := coneAngle / cast(float)(particleCount - 1);
+
+    for i : 0..particleCount - 1 {
+        angleOffset := -halfCone + step * cast(float)i;
+        shootDir := RotateVec2(direction, angleOffset + RandFloatInRange(-45.0, 45.0));
+        
+		bullet := Entity.{
+			type = .VFX,
+			position = position,
+			speed = DEFAULT_BULLET_SPEED * 0.05,
+			shape = .Square,
+			flags = .HasLifetime | .DecreaseSizeOverLifeTime,
+			shapeSize = DEFAULT_BULLET_SIZE_PX * 0.5,
+			color = Vector4.{0.9, 0.9, 0.4, 1},
+			velocity = -shootDir,
+			rotationVelocity = 3,
+			initialLifetime = 1,
+			remainingLifetime = 1,
+			collisionMask = .None
+		};
+		AddEntity(bullet);
+    }
+}
+
 EnemyShoot :: (entity: *Entity, delta: float) {
 	// Get the direction of the player
 	if (entity.type != .Enemy) return;
@@ -465,11 +557,14 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 	if (first.type == .Bullet && second.type == .Enemy) {
 		second.health -= first.damage;
 		// Again, we should probably address entity deletion some day
-		first.type = .None;
 		second.cacheVelocity = second.velocity;
 		second.velocity = first.velocity * 4;
 		second.state = .Knockback;
 		OnDamaged(second, first);
+		RemoveEntity(first);
+		for i : 0..6 {
+			BulletCollisionParticleVFX(first.position, RotateVec2(first.velocity, i * 60.0));
+		}
 		return;
 	}
 	if (first.type == .Player && second.type == .Bullet) {
@@ -478,12 +573,15 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 			g_shakeStrength = 0.5;
 			g_additionalTexelOffset = 3.0;
 			g_restoreTexelOffsetAfter = 0.2;
+			for i : 0..6 {
+				BulletCollisionParticleVFX(second.position, RotateVec2(second.velocity, i * 60.0));
+			}
 		}
 		else {
 			g_timeScale = SLOW_TIME_SCALE;
 			g_restoreTimeScaleAfter = 0.5;
 		}
-		second.type = .None;
+		RemoveEntity(second);
 		return;
 	}
 
@@ -507,17 +605,57 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 		first.velocity = reflectA;
 		second.velocity = reflectB;
 	}
+
+	if (first.type == .Pickup && second.type == .Player) {
+		if (AddPowerUps(first.flags, second)) {
+			// Do some sound effect
+		}
+		RemoveEntity(first);
+	}
+}
+
+CalcPowerUpsBitmask :: () -> EEntityFlags {
+	mask : u16 = 0;
+	baseLine: u16 = 1;
+	start := EEntityFlags.PowerUpBeginNumber;
+	end := EEntityFlags.PowerUpEndNumber;
+	for i : start..end {
+		mask |= (baseLine << i);
+	}
+
+	return cast(EEntityFlags)mask;
+}
+
+AddPowerUps :: (pickupFlags: EEntityFlags, playerEntity: *Entity) -> bool {
+	PowerUpsBitmask :: #run CalcPowerUpsBitmask();
+
+	cleanFlags := pickupFlags & PowerUpsBitmask;
+	print("Picked up power up with value: %s\n", cleanFlags);
+	playerEntity.flags |= cleanFlags;
+	return cleanFlags != 0;
 }
 
 DropLoot :: (position: Vector2) {
+	powerUpSelectN := RandIntInRange(xx EEntityFlags.PowerUpBeginNumber, xx EEntityFlags.PowerUpEndNumber);
+
+	powerUpSelectReal := cast(EEntityFlags)(1 << (powerUpSelectN - 1)); // yields the value of the flags
+	
 	entity := Entity.{
 		color = POWER_UP_COLOR,
 		shape = .Square,
 		shapeSize = DEFAULT_ENEMY_SIZE_PX,
 		position = position,
+		velocity = normalize(RandVec2(Vector2.{0,0}, Vector2.{1,1})),
+		rotationVelocity = DEFAULT_PICKUP_SPEED,
+		speed = DEFAULT_PICKUP_SPEED,
+		flags = powerUpSelectReal | .HasLifetime,
+		initialLifetime = PICKUP_LIFETIME,
+		remainingLifetime = PICKUP_LIFETIME,
+		collisionMask = .Player,
 		type = .Pickup
 	};
 	AddEntity(entity);
+	print("Dropped loot with value: %\n", powerUpSelectReal);
 }
 	
 CollisionSystem :: (entity: *Entity) {
@@ -687,6 +825,11 @@ UpdatePlayer :: (entity: *Entity, delta: float) {
 	mouseDir := normalize(g_mousePosition - entity.position);
 	tmpAngle := atan2(mouseDir.x, mouseDir.y);
 	entity.rotation = -tmpAngle;
+
+	if (entity.velocity != Vector2.{0, 0}) {
+		// Draw a trail in a cone
+		ConeVFX(entity.position - (entity.velocity * 10), entity.velocity);		
+	}
 }
 
 HealthSystem :: (entity: *Entity, delta: float) {
@@ -717,7 +860,7 @@ HealthSystem :: (entity: *Entity, delta: float) {
 			}
 			g_enemyCount -= 1;
 		}
-		entity.type = .None;
+		RemoveEntity(entity);
 		return;
 	}
 }
@@ -727,15 +870,29 @@ FadeEntityOverTime :: (entity: *Entity, delta: float64) {
 		return;
 	}
 	if (entity.remainingLifetime <= 0) {
-		// TODO: handle proper removal with entity recycling
-		entity.type = .None;
+		RemoveEntity(entity);
 	}
 
 	entity.remainingLifetime -= cast(float)delta;
 	// Fade the color's opacity
 	lerpingBlend := entity.remainingLifetime / entity.initialLifetime;
-	entity.color.w = lerp(0.4, 1.0, lerpingBlend);
+	entity.color.w = lerp(0.1, 1.0, lerpingBlend);
 	// entity.shapeSize = lerp(5, DEFAULT_BULLET_SIZE_PX, lerpingBlend);
+}
+
+DecreaseEntitySizeOverTime :: (entity: *Entity, delta: float64) {
+	if !(entity.flags & .DecreaseSizeOverLifeTime) {
+		return;
+	}
+	
+	if (entity.remainingLifetime <= 0) {
+		RemoveEntity(entity);
+	}
+
+	entity.remainingLifetime -= cast(float)delta;
+	// Fade the color's opacity
+	lerpingBlend := entity.remainingLifetime / entity.initialLifetime;
+	entity.scaleFactor = lerp(0.0, 1.0, lerpingBlend);
 }
 
 InputSystem :: () {
@@ -798,6 +955,7 @@ Update :: () {
 
 		if (g_isPaused) continue; // Only draw, do not update
 		FadeEntityOverTime(*entity, delta);
+		DecreaseEntitySizeOverTime(*entity, delta);
 		CollisionSystem(*entity);
 		
 		if (entity.type == .Player) {
@@ -847,11 +1005,21 @@ CreateEnemy :: (position: Vector2) -> Entity {
 }
 
 AddEntity :: (entity: Entity) -> s64 {
-	retVal := g_entityIndex;
-	g_entities[g_entityIndex] = entity;
-	g_entities[g_entityIndex].id = retVal;
-	g_entityIndex += 1;
+	success, retVal := Dequeue(*g_availableEntities);
+	g_entities[retVal] = entity;
+	g_entities[retVal].scaleFactor = 1; // Always initialize the scale to 1
+	g_entities[retVal].id = retVal;
 	return retVal;
+}
+
+RemoveEntity :: (entity: *Entity) {
+	// Prevent double free
+	if (entity.type == .None) {
+		return;
+	}
+	// We set its type to none and return its id to the available pool
+	entity.type = .None;
+	Enqueue(*g_availableEntities, entity.id);
 }
 
 InitResources :: () {
@@ -921,11 +1089,14 @@ DrawFrameEnd :: () {
     Simp.immediate_quad(0, 0, xx width, xx height, Vector4.{1,1,1,1});
 }
 
-main :: () {
-	last_time = seconds_since_init();	
-	g_window = create_window(window_name="TotalChaos Remastered", width=width, height=height);	
-	InitRenderingPipeline();
-
+InitGame :: () {
+    // Initialize our entity storage
+	InitQueue(*g_availableEntities, ENTITY_MAX_COUNT);
+    
+	for idx : 0..ENTITY_MAX_COUNT - 1 {
+		Enqueue(*g_availableEntities, idx);
+	}
+        
     // Create the player
     player := Entity.{
 		type = .Player,
@@ -943,8 +1114,16 @@ main :: () {
 	
 	enemy := CreateEnemy(Vector2.{width / 2.0, height / 1.5});
 	AddEntity(enemy);
+	
+}
 
+main :: () {
+	last_time = seconds_since_init();	
+	g_window = create_window(window_name="TotalChaos Remastered", width=width, height=height);	
+
+	InitRenderingPipeline();
 	InitResources();
+	InitGame();
 
     while !g_shouldQuitGame {
 		reset_temporary_storage();
@@ -953,12 +1132,7 @@ main :: () {
         Clamp(*mouseY, 0, height);
         Clamp(*mouseX, 0, width);
 		g_mousePosition = Vector2.{cast(float) mouseX, height - cast(float)mouseY};
-		
-		// GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, scene_fbo);		
-		// GL.glViewport(0, 0, cast(u32)width, cast(u32)height);	    
-		
-		// GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, scene_fbo);		
-
+	
 		DrawFrameBegin();
         Update();
         DrawFrameEnd();

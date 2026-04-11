@@ -34,10 +34,14 @@ EEntityFlags :: enum u16 {
 	ShouldFollowPlayer :: 4;
 
 	HasLifetime :: 8;
-
 	// Power ups
+	PowerUpBeginNumber :: 5; // Not an enum value, utility for ranges
 	HasShield :: 16;
 	HasBomb :: 32;
+	HasSplitBullet :: 64;
+	HasGhostBulletChance :: 128;
+	PowerUpEndNumber :: 7; // Not an enum value, utility for ranges (increment by 1 when adding a power up)
+	DecreaseSizeOverLifeTime :: 256;
 	
 }
 
@@ -54,6 +58,7 @@ Entity :: struct {
 	velocity : Vector2;
 	cacheVelocity: Vector2;
 	rotation: float;
+	scaleFactor: float;
 	rotationVelocity: float;
 
 	state: EEffectState;
