@@ -21,7 +21,10 @@ SpawnPoint :: enum u8 {
 SLOW_TIME_SCALE :: 0.3;
 DEFAULT_PLAYER_COLOR :: Vector4.{3 / 255.0, 211 / 255.0, 252 / 255.0, 1};
 DEFAULT_PLAYER_SIZE_PX :: 25;
+ENEMY_BULLET_COLOR :: Vector4.{1, 0.01, 0, 1};
 
+ENTITY_MAX_SPEED :: 2000;
+SHIELD_HEALTH :: 3;
 BOMB_RADIUS :: 600;
 DEFAULT_BULLET_SPEED : float : 1000; 
 DEFAULT_PICKUP_SPEED : float : 100;
@@ -33,7 +36,7 @@ DEFAULT_BULLET_SIZE_PX :: 20;
 STAMINA_PER_BULLET :: 30;
 DEFAULT_PLAYER_STAMINA :: 100;
 
-SUCCESSFUL_PARRY_WINDOW_S :: 0.3;
+SUCCESSFUL_PARRY_WINDOW_S :: 0.15;
 
 DEFAULT_ENEMY_HEALTH :: DEFAULT_HEALTH * 2;
 PLAYER_BULLET_COLOR :: Vector4.{0, 0.2, 1, 1};
@@ -53,7 +56,7 @@ VEC2_RIGHT :: Vector2.{1, 0};
 PLAYER_SWEEP_ANIMATION_TIME :: 0.2;
 
 // We want the bullets to bounce off of each other, so we include the bullet collision mask
-ENEMY_BULLET_COLLISION_MASK : EEntityType : .Player | .Bullet;
+ENEMY_BULLET_COLLISION_MASK : EEntityType : .Player | .Bullet | .Shield;
 
 ENEMY_SHOOT_COOLDOWN_S :: 3.0;
 ENEMY_SHOOT_PREPARATION_S :: 0.5;
@@ -61,6 +64,7 @@ ENEMY_SHOOT_PREPARATION_S :: 0.5;
 // TBD
 PLAYER_SHOOT_COOLDOWN_S :: 1.0;
 STAMINA_FADE_THRESHOLD_TIME :: 1.0;
+SPLIT_BULLET_COUNT :: 5;
 
 ENTITY_MAX_COUNT :: 2048;
 
@@ -73,6 +77,7 @@ g_timeScale: float = 1;
 g_timeScaleCache: float = 1;
 g_restoreTimeScaleAfter: float = 0;
 g_staminaUnchangedTimer: float = 0;
+g_splitBulletsLeft: int = 0;
 g_font: *Simp.Dynamic_Font;
 g_additionalTexelOffset: float = 1;
 g_restoreTexelOffsetAfter: float = 0;
@@ -164,6 +169,9 @@ DrawEntity :: (entity: *Entity) {
 	else if (entity.shape == .GradientCircle) {
 		DrawGradientCircle(entity.position + g_cameraOffset, entitySize, entity.color);
 	}
+	else if (entity.shape == .Star) {
+		DrawStar(entity.position + g_cameraOffset, entitySize, entitySize * 0.3, color = entity.color);
+	}
 }
 
 CalculateRandomSpawnPoint :: (outSpawnPoint: *SpawnPoint) -> Vector2 {
@@ -186,7 +194,7 @@ DrawPowerUpsUI :: () {
 	color: Vector4;
 	spacing := width * 0.05;
 	if (player.flags & .HasBomb) {
-		text = tprint("BOMB: AVAILABLE");
+		text = tprint("BOMB: [SPACE]");
 		color = Vector4.{0, 1.0, 0.1, 1.0};
 	}
 	else {
@@ -210,8 +218,8 @@ DrawPowerUpsUI :: () {
     Simp.draw_prepared_text(g_font, xx prevItemPos.x, xx prevItemPos.y, color);
     prevItemPos.x += text_width + spacing;
 	
-	if (player.flags & .HasShield) {
-		text = tprint("SPLIT_BULLET: ON");
+	if (player.flags & .HasSplitBullet) {
+		text = tprint("SPLIT_BULLET: %", g_splitBulletsLeft);
 		color = Vector4.{0, 1.0, 0.1, 1.0};
 	}
 	else {
@@ -406,21 +414,37 @@ ShootBullet :: (position: Vector2, shootDir: Vector2, color: Vector4, collisionM
 	AddEntity(bullet);
 }
 
-ShootShard :: (position: Vector2, shootDir: Vector2) {
+ShootShard :: (position: Vector2, shootDir: Vector2, damageAllies: bool) {
+	collisionMask : EEntityType;
+	color: Vector4;
+	lifetime : float = 3;
+	speed := DEFAULT_BULLET_SPEED * 0.2;
+
+	if (damageAllies) {
+		collisionMask = .Enemy;
+		color = Vector4.{0, 1, 0, 1};
+	}
+	else {
+		collisionMask = .Player | .Shield;
+		color = ENEMY_BULLET_COLOR;
+		// lifetime = 1;
+		speed = DEFAULT_BULLET_SPEED;
+	}
+	
 	bullet := Entity.{
 		type = .Bullet,
 		position = position,
-		speed = DEFAULT_BULLET_SPEED * 0.2,
+		speed = speed,
 		shape = .Square,
 		flags = .HasLifetime,
 		shapeSize = DEFAULT_BULLET_SIZE_PX * 1.5,
-		color = Vector4.{0, 1, 0, 1},
+		color = color,
 		damage = DEFAULT_BULLET_DAMAGE,
 		velocity = shootDir,
 		rotationVelocity = 2,
-		initialLifetime = 3,
-		remainingLifetime = 3,
-		collisionMask = .Enemy
+		initialLifetime = lifetime,
+		remainingLifetime = lifetime,
+		collisionMask = collisionMask
 	};
 	
 	AddEntity(bullet);
@@ -527,14 +551,14 @@ EnemyShoot :: (entity: *Entity, delta: float) {
 		if (entity.shootAnimTimer <= 0) {
 			if (entity.flags & .CanMultiShoot) {
 				SHOOT_POS_OFFSET :: 20.0;
-				ShootBullet(entity.position + (VEC2_RIGHT * SHOOT_POS_OFFSET), VEC2_RIGHT, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
-				ShootBullet(entity.position + (VEC2_LEFT * SHOOT_POS_OFFSET), VEC2_LEFT, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
-				ShootBullet(entity.position + (VEC2_UP * SHOOT_POS_OFFSET), VEC2_UP, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
-				ShootBullet(entity.position + (VEC2_DOWN * SHOOT_POS_OFFSET), VEC2_DOWN, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+				ShootBullet(entity.position + (VEC2_RIGHT * SHOOT_POS_OFFSET), VEC2_RIGHT, ENEMY_BULLET_COLOR, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+				ShootBullet(entity.position + (VEC2_LEFT * SHOOT_POS_OFFSET), VEC2_LEFT, ENEMY_BULLET_COLOR, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+				ShootBullet(entity.position + (VEC2_UP * SHOOT_POS_OFFSET), VEC2_UP, ENEMY_BULLET_COLOR, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+				ShootBullet(entity.position + (VEC2_DOWN * SHOOT_POS_OFFSET), VEC2_DOWN, ENEMY_BULLET_COLOR, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
 			}
 			else {
 				shootDir := normalize(g_entities[g_playerId].position - entity.position);
-				ShootBullet(entity.position, shootDir, Vector4.{1, 0.01, 0, 1}, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+				ShootBullet(entity.position, shootDir, ENEMY_BULLET_COLOR, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
 			}
 			entity.shootCooldownTimer = ENEMY_SHOOT_COOLDOWN_S;
 			entity.color = Vector4.{1, 1, 1, 1}; // Default enemy color
@@ -548,7 +572,6 @@ EnemyShoot :: (entity: *Entity, delta: float) {
 	// Prepare to shoot
 	entity.shootAnimTimer = ENEMY_SHOOT_PREPARATION_S;
 	entity.cacheColor = entity.color;
-	
 }
 
 PlayerShoot :: (entity: *Entity) {
@@ -557,6 +580,15 @@ PlayerShoot :: (entity: *Entity) {
 	}
 	shootDir := normalize(g_mousePosition - entity.position);
 	ShootBullet(entity.position, shootDir, PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
+	if (entity.flags & .HasSplitBullet) {
+		ShootBullet(entity.position, RotateVec2(shootDir, 90), PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
+		ShootBullet(entity.position, RotateVec2(shootDir, -90), PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
+		g_splitBulletsLeft -= 1;
+		
+		if (g_splitBulletsLeft <= 0) {
+			entity.flags &= ~.HasSplitBullet;
+		}
+	}
 	entity.stamina -= STAMINA_PER_BULLET;
 	g_staminaUnchangedTimer	= STAMINA_FADE_THRESHOLD_TIME;
 }
@@ -586,6 +618,7 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 		first.health -= 9999;
 		g_timeScale = SLOW_TIME_SCALE;
 		g_restoreTimeScaleAfter += 0.2;
+		OnDamaged(first, second);
 	}
 	if (second.type == .BombHolder && first.type == .Bullet) {
 		RemoveEntity(first);
@@ -593,7 +626,7 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 	if (first.type == .BombHolder && second.type == .Bullet) {
 		RemoveEntity(second);
 	}
-	
+
 	if (first.type == .Bullet && second.type == .Enemy) {
 		second.health -= first.damage;
 		// Again, we should probably address entity deletion some day
@@ -608,6 +641,11 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 		return;
 	}
 	if (first.type == .Player && second.type == .Bullet) {
+		if (first.flags & .HasShield) {
+			BounceOff(first, second, true);
+			return;
+		}
+		
 		if (OnDamaged(first, second)) {
 			first.health -= second.damage;
 			g_shakeStrength = 0.5;
@@ -626,24 +664,7 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 	}
 
 	if (first.type == .Bullet && second.type == .Bullet) {
-		// Calculate the normal of the collision
-		diff := second.position - first.position;
-	
-	    overlapX := (first.shapeSize + second.shapeSize) - abs(diff.x);
-	    overlapY := (first.shapeSize+ second.shapeSize) - abs(diff.y);
-
-	    normal : Vector2;
-	    if overlapX < overlapY {
-	    	normal = Vector2.{sign(diff.x), 0};
-	    }
-	    else {
-	    	normal = Vector2.{0, sign(diff.y)};
-	    }
-	
-		reflectA := CalculateReflectionVector(first.velocity, normal);
-		reflectB := CalculateReflectionVector(second.velocity, normal);
-		first.velocity = reflectA;
-		second.velocity = reflectB;
+		BounceOff(first, second);
 	}
 
 	if (first.type == .Pickup && second.type == .Player) {
@@ -654,13 +675,38 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 	}
 }
 
+BounceOff :: (first: *Entity, second: *Entity, keepFirstStatic: bool = false) {
+	// Calculate the normal of the collision
+	diff := second.position - first.position;
+
+    overlapX := (first.shapeSize + second.shapeSize) - abs(diff.x);
+    overlapY := (first.shapeSize+ second.shapeSize) - abs(diff.y);
+
+    normal : Vector2;
+    if overlapX < overlapY {
+    	normal = Vector2.{sign(diff.x), 0};
+    }
+    else {
+    	normal = Vector2.{0, sign(diff.y)};
+    }
+
+
+	if (!keepFirstStatic) {
+		reflectA := CalculateReflectionVector(first.velocity, normal);
+		first.velocity = reflectA;
+	}
+	reflectB := CalculateReflectionVector(second.velocity, normal);
+	second.velocity = reflectB;
+	
+}
+
 CalcPowerUpsBitmask :: () -> EEntityFlags {
 	mask : u16 = 0;
 	baseLine: u16 = 1;
 	start := EEntityFlags.PowerUpBeginNumber;
 	end := EEntityFlags.PowerUpEndNumber;
 	for i : start..end {
-		mask |= (baseLine << i);
+		mask |= (baseLine << (i - 1));
 	}
 
 	return cast(EEntityFlags)mask;
@@ -670,9 +716,30 @@ AddPowerUps :: (pickupFlags: EEntityFlags, playerEntity: *Entity) -> bool {
 	PowerUpsBitmask :: #run CalcPowerUpsBitmask();
 
 	cleanFlags := pickupFlags & PowerUpsBitmask;
-	print("Picked up power up with value: %s\n", cleanFlags);
+	print("Picked up power up with value: %\n", cleanFlags);
 	playerEntity.flags |= cleanFlags;
+	if (playerEntity.flags & .HasSplitBullet) {
+		g_splitBulletsLeft = SPLIT_BULLET_COUNT;
+	}
+	if (playerEntity.flags & .HasShield) {
+		// Create the shield entity (just a visual)
+		InstantiateShield();
+	}
 	return cleanFlags != 0;
+}
+
+InstantiateShield :: () {
+	shield := Entity.{
+		type = .Shield,
+		flags = .HasLifetime,
+		initialLifetime = 10,
+		remainingLifetime = 10,
+		shape = .GradientCircle,
+		shapeSize = DEFAULT_PLAYER_SIZE_PX * 2.5,
+		color = Vector4.{1, 1, 1, 1},
+	};
+
+	AddEntity(shield);
 }
 
 DropLoot :: (position: Vector2) {
@@ -767,6 +834,9 @@ OnDamaged :: (entity: *Entity, damageSrc: *Entity) -> bool {
 	entity.damageAnimTimer = RECOVER_FROM_DMG_TIME_S;
 	if (entity.state == .None) {
 		entity.state = .Damaged;
+	}
+	if (entity.health <= 0 && entity.flags & .ExplodeOnDeath && entity.flags & .ShouldFollowPlayer) {
+		entity.flags &= ~.ExplodeOnDeath;
 	}
 	return true;
 }
@@ -907,7 +977,7 @@ HealthSystem :: (entity: *Entity, delta: float) {
 				g_timeScale = SLOW_TIME_SCALE;
 				g_restoreTimeScaleAfter = 0.5;
 				for i : 0..12 {
-					ShootShard(entity.position, RotateVec2(entity.velocity, cast(float)i * 30.0));
+					ShootShard(entity.position, RotateVec2(entity.velocity, cast(float)i * 30.0), cast(bool)(entity.flags & .DamageAlliesOnExplosion));
 				}
 			}
 			else {
@@ -927,6 +997,9 @@ FadeEntityOverTime :: (entity: *Entity, delta: float64) {
 		return;
 	}
 	if (entity.remainingLifetime <= 0) {
+		if (entity.type == .Shield) {
+			g_entities[g_playerId].flags &= ~.HasShield;
+		}
 		RemoveEntity(entity);
 	}
 
@@ -977,6 +1050,21 @@ InputSystem :: () {
 }
 
 
+FollowSystem :: (entity: *Entity) {
+	if !(entity.flags & .ShouldFollowPlayer) return;
+	playerPos: Vector2 = g_entities[g_playerId].position;
+	rawVec := playerPos - entity.position;
+	direction := normalize(rawVec);
+	entity.velocity = direction;
+	if (entity.type == .Enemy && entity.flags & .ExplodeOnDeath) {
+		distanceToPlayer := magnitude(rawVec);
+		if (distanceToPlayer <= 200) {
+			// Explode
+			entity.health -= 999999;
+		}
+	}
+}
+
 Update :: () {
     now := seconds_since_init();
     unscaledDelta: float64 = (now - last_time);
@@ -1020,7 +1108,11 @@ Update :: () {
 		else if (entity.type == .BombHolder) {
 			BombUpdate(*entity, current_dt);
 		}
+		else if (entity.type == .Shield) {
+			(*entity).position = g_entities[g_playerId].position;
+		}
 		
+		FollowSystem(*entity);
 		CollisionSystem(*entity);
 		HandleCooldownTimers(*entity, current_dt);
 		HandleSpecialStates(*entity, current_dt);
@@ -1041,15 +1133,22 @@ CreateEnemy :: (position: Vector2) -> Entity {
 	shape := EShape.Triangle;
 	flags := EEntityFlags.None;
 	health := DEFAULT_ENEMY_HEALTH;
+	speed := DEFAULT_ENEMY_SPEED;
 	if (RandChance(1, 7)) {
 		// Creates an AOE enemy
-		flags |= .CanMultiShoot | .ExplodeOnDeath;
+		flags |= .CanMultiShoot | .ExplodeOnDeath | .DamageAlliesOnExplosion;
 		shape = .Square;
 		health *= 2;
 	}
+	else if (RandChance(1, 5)) {
+		// Creates an exploding enemy that follows you and explodes once it's close enough
+		flags |= .ExplodeOnDeath | .ShouldFollowPlayer;
+		shape = .Star;
+		speed *= 2;
+	}
 	result := Entity.{
 		position = position,
-		speed = DEFAULT_ENEMY_SPEED,
+		speed = xx speed,
 		shape = shape,
 		shapeSize = DEFAULT_ENEMY_SIZE_PX,
 		color = Vector4.{1, 1, 1, 1},

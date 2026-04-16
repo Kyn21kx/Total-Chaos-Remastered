@@ -127,6 +127,46 @@ DrawRect :: (position: Vector2, size: Vector2, color: Vector4, angle: float) {
         color, color, color
     );
 }
+
+DrawStar :: (center: Vector2, outer_radius: float, inner_radius: float, points: int = 5, angle: float = 0.0, color: Vector4) {
+    Simp.set_shader_for_color(true);
+
+    // A star is just alternating outer and inner points around a circle
+    total_verts := points * 2;
+    step := (2.0 * PI) / cast(float) total_verts;
+
+    ca := cos(angle);
+    sa := sin(angle);
+
+    for i : 0..total_verts-1 {
+        angle0 := step * cast(float) i;
+        angle1 := step * cast(float) (i + 1);
+
+        // Alternate between outer and inner radius
+        r0 := ifx (i % 2 == 0) then outer_radius else inner_radius;
+        r1 := ifx (i % 2 == 0) then inner_radius else outer_radius;
+
+        // Local space points
+        lx0 := cos(angle0) * r0;
+        ly0 := sin(angle0) * r0;
+        lx1 := cos(angle1) * r1;
+        ly1 := sin(angle1) * r1;
+
+        // Rotate and translate
+        x0 := center.x + lx0 * ca - ly0 * sa;
+        y0 := center.y + lx0 * sa + ly0 * ca;
+        x1 := center.x + lx1 * ca - ly1 * sa;
+        y1 := center.y + lx1 * sa + ly1 * ca;
+
+        Simp.immediate_triangle(
+            .{center.x, center.y, 0},
+            .{x0, y0, 0},
+            .{x1, y1, 0},
+            color, color, color
+        );
+    }
+}
+
 DrawTriangle :: (center: Vector2, size: float, angle: float, color: Vector4) {
     // Define the three points of the triangle relative to center
     // Pointing up by default

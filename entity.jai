@@ -10,8 +10,9 @@ EEntityType :: enum u16 {
 	Pickup :: 16;
 	VFX :: 32;
 	BombHolder :: 64;
+	Shield :: 128;
 
-	CollisionEnabledLayer :: Player | Enemy | Bullet | Pickup | BombHolder;
+	CollisionEnabledLayer :: Player | Enemy | Bullet | Pickup | BombHolder | Shield;
 }
 
 EShape :: enum u16 {
@@ -20,6 +21,7 @@ EShape :: enum u16 {
 	Triangle;
 	Square;
 	GradientCircle;
+	Star;
 }
 
 EEffectState :: enum u16 {
@@ -42,8 +44,9 @@ EEntityFlags :: enum u16 {
 	HasBomb :: 32;
 	HasSplitBullet :: 64;
 	HasGhostBulletChance :: 128;
-	PowerUpEndNumber :: 7; // Not an enum value, utility for ranges (increment by 1 when adding a power up)
+	PowerUpEndNumber :: 8; // Not an enum value, utility for ranges (increment by 1 when adding a power up)
 	DecreaseSizeOverLifeTime :: 256;
+	DamageAlliesOnExplosion :: 512;
 	
 }
 
