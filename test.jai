@@ -94,6 +94,30 @@ g_pauseStream: *Sound_Stream;
 g_enemySpawnTimer : float64 = 0;
 g_enemyCount: s32 = 0;
 
+g_waveNumber : s32 = 1;
+g_enemiesKilledThisWave : s32 = 0;
+g_enemiesToKillThisWave : s32 = 5;
+g_waveAnnouncementTimer : float = 0;
+g_newWaveCountdownTimer : float = 0;
+g_enemiesSpawnedThisWave : s32 = 0;
+g_isWaveCleared : bool = false;
+g_newWaveAnnouncement : bool = false;
+
+WAVE_BASE_ENEMIES_PER_WAVE :: 10;
+WAVE_MAX_ENEMIES_PER_WAVE :: 50;
+WAVE_ENEMIES_INCREMENT :: 3;
+WAVE_BASE_SPAWN_INTERVAL :: 2.0;
+WAVE_MIN_SPAWN_INTERVAL :: 0.3;
+WAVE_SPAWN_INTERVAL_DECREASE :: 0.1;
+WAVE_BASE_ENEMY_SPEED_MULT :: 1.0;
+WAVE_MAX_ENEMY_SPEED_MULT :: 3.0;
+WAVE_SPEED_INCREMENT :: 0.15;
+WAVE_BASE_ENEMY_HEALTH_MULT :: 1.0;
+WAVE_MAX_ENEMY_HEALTH_MULT :: 5.0;
+WAVE_HEALTH_INCREMENT :: 0.2;
+WAVE_CLEAR_DISPLAY_TIME :: 2.0;
+WAVE_NEW_WAVE_COUNTDOWN :: 3.0;
+
 // Entities we need to keep a constant reference to
 g_debugMousePtrEntityId := -1;
 g_playerId := -1;
@@ -174,6 +198,48 @@ DrawEntity :: (entity: *Entity) {
 	}
 }
 
+GetCurrentWaveSpawnInterval :: () -> float64 {
+    interval := WAVE_BASE_SPAWN_INTERVAL - (cast(float64)(g_waveNumber - 1) * WAVE_SPAWN_INTERVAL_DECREASE);
+    return max(interval, WAVE_MIN_SPAWN_INTERVAL);
+}
+
+GetCurrentWaveEnemySpeedMult :: () -> float {
+    mult := WAVE_BASE_ENEMY_SPEED_MULT + (cast(float)(g_waveNumber - 1) * WAVE_SPEED_INCREMENT);
+    return min(mult, WAVE_MAX_ENEMY_SPEED_MULT);
+}
+
+GetCurrentWaveEnemyHealthMult :: () -> float {
+    mult := WAVE_BASE_ENEMY_HEALTH_MULT + (cast(float)(g_waveNumber - 1) * WAVE_HEALTH_INCREMENT);
+    return min(mult, WAVE_MAX_ENEMY_HEALTH_MULT);
+}
+
+GetEnemiesPerWave :: () -> s32 {
+    count := WAVE_BASE_ENEMIES_PER_WAVE + ((g_waveNumber - 1) * WAVE_ENEMIES_INCREMENT);
+    return min(count, WAVE_MAX_ENEMIES_PER_WAVE);
+}
+
+StartNewWave :: () {
+    g_waveNumber += 1;
+    g_enemiesToKillThisWave = GetEnemiesPerWave();
+    g_enemiesKilledThisWave = 0;
+    g_enemiesSpawnedThisWave = 0;
+    g_isWaveCleared = false;
+    g_newWaveAnnouncement = true;
+    g_newWaveCountdownTimer = WAVE_NEW_WAVE_COUNTDOWN;
+    g_waveAnnouncementTimer = WAVE_NEW_WAVE_COUNTDOWN + WAVE_CLEAR_DISPLAY_TIME;
+}
+
+CheckWaveCompletion :: () {
+    if (g_isWaveCleared) return;
+    if (g_newWaveAnnouncement) return;
+    
+    if (g_enemiesKilledThisWave >= g_enemiesToKillThisWave) {
+        g_isWaveCleared = true;
+        g_waveAnnouncementTimer = WAVE_CLEAR_DISPLAY_TIME;
+        print("Wave % Complete!\n", g_waveNumber);
+    }
+}
+
 CalculateRandomSpawnPoint :: (outSpawnPoint: *SpawnPoint) -> Vector2 {
 	spotNumericMin := cast(u8)SpawnPoint.Top;
 	spotNumericMax := (cast(u8)SpawnPoint.Right) + 1;
@@ -188,7 +254,7 @@ CalculateRandomSpawnPoint :: (outSpawnPoint: *SpawnPoint) -> Vector2 {
 }
 
 DrawPowerUpsUI :: () {
-	prevItemPos := Vector2.{ width * 0.1, height * 0.9};
+	prevItemPos := Vector2.{ width * 0.33, height * 0.9};
 	text: string;
 	player : *Entity = *(g_entities[g_playerId]);
 	color: Vector4;
@@ -237,11 +303,41 @@ DrawUI :: (delta: float) {
 		g_scoreBlendTimer -= delta * scoreBlendSpeed;
 	}
 	displayScore := cast(s32)lerp(cast(float)g_prevScore, cast(float)g_score, 1 - g_scoreBlendTimer);
-	healthText := tprint("Score: %", displayScore);
-    text_width := Simp.prepare_text(g_font, healthText);
-
+    
     color  := Vector4.{0.5, 0.8, 0.2, 1};
-    Simp.draw_prepared_text(g_font, xx (width / 2), xx (height * 0.9), color);
+    
+    waveText := tprint("Wave: %", g_waveNumber);
+    text_width := Simp.prepare_text(g_font, waveText);
+    Simp.draw_prepared_text(g_font, xx (width * 0.05), xx (height * 0.95), color);
+    
+    killsText := tprint("Kills: %/%", g_enemiesKilledThisWave, g_enemiesToKillThisWave);
+    text_width = Simp.prepare_text(g_font, killsText);
+    Simp.draw_prepared_text(g_font, xx (width * 0.05), xx (height * 0.92), color);
+    
+	healthText := tprint("Score: %", displayScore);
+    text_width = Simp.prepare_text(g_font, healthText);
+    Simp.draw_prepared_text(g_font, xx (width / 2), xx (height * 0.95), color);
+    
+    if (g_waveAnnouncementTimer > 0) {
+        if (g_newWaveAnnouncement) {
+            announceText := tprint("Wave %!", g_waveNumber);
+            text_width = Simp.prepare_text(g_font, announceText);
+            Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx (height / 2), Vector4.{1, 1, 0, 1});
+            
+            countdownText := tprint("Starting in %...", cast(s32)ceil(g_newWaveCountdownTimer));
+            text_width = Simp.prepare_text(g_font, countdownText);
+            Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx (height / 2) - 30, Vector4.{0.8, 0.8, 0.8, 1});
+            
+            enemiesText := tprint("Enemies to kill: %", g_enemiesToKillThisWave);
+            text_width = Simp.prepare_text(g_font, enemiesText);
+            Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx (height / 2) - 60, Vector4.{0.6, 0.6, 0.6, 1});
+        }
+        else if (g_isWaveCleared) {
+            clearedText := tprint("Wave % Cleared!", g_waveNumber);
+            text_width = Simp.prepare_text(g_font, clearedText);
+            Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx (height / 2), Vector4.{0, 1, 0.5, 1});
+        }
+    }
     
 	DrawPowerUpsUI();
  
@@ -307,8 +403,16 @@ SpawnPointDefaultTravelDir :: (spawnPosition: SpawnPoint, entity: *Entity) -> Ve
 
 // This will spawn if some time and probability is met
 SpawnEntities :: (delta: float64) {
+    if (g_newWaveAnnouncement) return;
+    
 	g_enemySpawnTimer += delta;
-	if (g_enemyCount < MAX_ENEMIES_ON_SCREEN && g_enemySpawnTimer >= ENEMY_SPAWN_TIME_THRESHOLD_IN_SECONDS && RandChance(1, 2)) {
+    
+    maxOnScreen := min(MAX_ENEMIES_ON_SCREEN + (g_waveNumber - 1) * 2, 30);
+    
+	if (g_enemiesSpawnedThisWave < g_enemiesToKillThisWave && 
+        g_enemyCount < maxOnScreen && 
+        g_enemySpawnTimer >= GetCurrentWaveSpawnInterval() && 
+        RandChance(1, 2)) {
 		spawnPointGuide : SpawnPoint;
 		randomPosition := CalculateRandomSpawnPoint(*spawnPointGuide);
 		enemy := CreateEnemy(randomPosition);
@@ -316,6 +420,7 @@ SpawnEntities :: (delta: float64) {
 		enemy.rotation = -atan2(enemy.velocity.x, enemy.velocity.y);
 		AddEntity(enemy);
 		g_enemySpawnTimer = 0.0;
+        g_enemiesSpawnedThisWave += 1;
 	}
 }
 
@@ -428,7 +533,7 @@ ShootShard :: (position: Vector2, shootDir: Vector2, damageAllies: bool) {
 		collisionMask = .Player | .Shield;
 		color = ENEMY_BULLET_COLOR;
 		// lifetime = 1;
-		speed = DEFAULT_BULLET_SPEED;
+		speed = DEFAULT_BULLET_SPEED * 0.8;
 	}
 	
 	bullet := Entity.{
@@ -967,6 +1072,7 @@ HealthSystem :: (entity: *Entity, delta: float) {
 	if (entity.health <= 0) {
 		if (entity.type == .Enemy) {
 			IncreaseScore(entity.scoreAmount);
+            g_enemiesKilledThisWave += 1;
 
 			if (RandChance(1, 10)) {
 				DropLoot(entity.position);
@@ -1065,6 +1171,27 @@ FollowSystem :: (entity: *Entity) {
 	}
 }
 
+UpdateWaveSystem :: (delta: float) {
+    if (g_waveAnnouncementTimer > 0) {
+        g_waveAnnouncementTimer -= delta;
+        
+        if (g_newWaveAnnouncement && g_newWaveCountdownTimer > 0) {
+            g_newWaveCountdownTimer -= delta;
+            if (g_newWaveCountdownTimer <= 0) {
+                g_newWaveAnnouncement = false;
+            }
+        }
+    }
+    
+    if (!g_newWaveAnnouncement) {
+        CheckWaveCompletion();
+    }
+    
+    if (g_isWaveCleared && g_waveAnnouncementTimer <= 0) {
+        StartNewWave();
+    }
+}
+
 Update :: () {
     now := seconds_since_init();
     unscaledDelta: float64 = (now - last_time);
@@ -1082,6 +1209,7 @@ Update :: () {
 
 	InputSystem();
 	
+    UpdateWaveSystem(current_dt);
 	
 	RestoreTimeScaleSystem(cast(float)unscaledDelta);
 	RestoreTexelOffsetSystem(current_dt);
@@ -1132,8 +1260,10 @@ DEFAULT_ENEMY_SCORE :: 5;
 CreateEnemy :: (position: Vector2) -> Entity {
 	shape := EShape.Triangle;
 	flags := EEntityFlags.None;
-	health := DEFAULT_ENEMY_HEALTH;
-	speed := DEFAULT_ENEMY_SPEED;
+	health := DEFAULT_ENEMY_HEALTH * GetCurrentWaveEnemyHealthMult();
+	speed := DEFAULT_ENEMY_SPEED * GetCurrentWaveEnemySpeedMult();
+    score := DEFAULT_ENEMY_SCORE + (g_waveNumber - 1) * 2;
+    
 	if (RandChance(1, 7)) {
 		// Creates an AOE enemy
 		flags |= .CanMultiShoot | .ExplodeOnDeath | .DamageAlliesOnExplosion;
@@ -1155,7 +1285,7 @@ CreateEnemy :: (position: Vector2) -> Entity {
 		health = health,
 		originalHealth = health,
 		shootCooldownTimer = ENEMY_SHOOT_COOLDOWN_S,
-		scoreAmount = DEFAULT_ENEMY_SCORE,
+		scoreAmount = score,
 		flags = flags,
 		type = .Enemy
 	};
@@ -1271,9 +1401,11 @@ InitGame :: () {
 
 	g_playerId = AddEntity(player);
 	
-	enemy := CreateEnemy(Vector2.{width / 2.0, height / 1.5});
-	AddEntity(enemy);
-	
+    g_waveNumber = 0;
+    g_enemiesToKillThisWave = WAVE_BASE_ENEMIES_PER_WAVE;
+    g_waveAnnouncementTimer = WAVE_NEW_WAVE_COUNTDOWN + WAVE_CLEAR_DISPLAY_TIME;
+    g_newWaveAnnouncement = true;
+    g_newWaveCountdownTimer = WAVE_NEW_WAVE_COUNTDOWN;
 }
 
 main :: () {
