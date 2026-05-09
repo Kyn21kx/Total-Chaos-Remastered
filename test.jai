@@ -18,6 +18,14 @@ SpawnPoint :: enum u8 {
 	Right;
 }
 
+
+EMouseButtonState :: enum u8 {
+	None :: 0;
+	MousePressedLeft :: 1;
+	MousePressedRight :: 2;
+	SpacePressed :: 4;
+}
+
 SLOW_TIME_SCALE :: 0.3;
 DEFAULT_PLAYER_COLOR :: Vector4.{3 / 255.0, 211 / 255.0, 252 / 255.0, 1};
 DEFAULT_PLAYER_SIZE_PX :: 25;
@@ -68,10 +76,13 @@ SPLIT_BULLET_COUNT :: 5;
 
 ENTITY_MAX_COUNT :: 2048;
 
+DEFAULT_TEXEL_OFFSET :: 1.5;
+
 g_shouldQuitGame := false;
 g_entities : [ENTITY_MAX_COUNT] Entity;
 g_availableEntities: Queue(s64);
 g_mousePosition: Vector2;
+g_inputStateThisFrame: EMouseButtonState = .None;
 g_currentTime : float64 = 0;
 g_timeScale: float = 1;
 g_timeScaleCache: float = 1;
@@ -79,7 +90,7 @@ g_restoreTimeScaleAfter: float = 0;
 g_staminaUnchangedTimer: float = 0;
 g_splitBulletsLeft: int = 0;
 g_font: *Simp.Dynamic_Font;
-g_additionalTexelOffset: float = 1;
+g_additionalTexelOffset: float = DEFAULT_TEXEL_OFFSET;
 g_restoreTexelOffsetAfter: float = 0;
 
 g_sceneTexture: *Simp.Texture;
@@ -317,12 +328,14 @@ DrawUI :: (delta: float) {
 	healthText := tprint("Score: %", displayScore);
     text_width = Simp.prepare_text(g_font, healthText);
     Simp.draw_prepared_text(g_font, xx (width / 2), xx (height * 0.95), color);
+
+    screenCenter := Vector2.{xx (width / 2), xx (height / 2)};
     
-    if (g_waveAnnouncementTimer > 0) {
+    if (g_waveAnnouncementTimer > 0 && !g_isPaused) {
         if (g_newWaveAnnouncement) {
             announceText := tprint("Wave %!", g_waveNumber);
             text_width = Simp.prepare_text(g_font, announceText);
-            Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx (height / 2), Vector4.{1, 1, 0, 1});
+            Simp.draw_prepared_text(g_font, xx screenCenter.x - (text_width / 2), xx (height / 2), Vector4.{1, 1, 0, 1});
             
             countdownText := tprint("Starting in %...", cast(s32)ceil(g_newWaveCountdownTimer));
             text_width = Simp.prepare_text(g_font, countdownText);
@@ -343,15 +356,65 @@ DrawUI :: (delta: float) {
  
     if (IsGameOver()) {
 	    text_width = Simp.prepare_text(g_font, "GAME OVER!");
-	    Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx (height / 2), color);
+	    gameOverPos := Vector2.{xx (screenCenter.x - (text_width / 2)), screenCenter.y};
+	    Simp.draw_prepared_text(g_font, xx gameOverPos.x, xx gameOverPos.y, color);
+
+	    color = Vector4.{1, 1, 1, 1.0};
+
+	    restartPos := screenCenter;
+	    restartPos.y += VEC2_DOWN.y * (height * 0.1);
+	    restartPos.x += VEC2_LEFT.x * (width * 0.1);
+	    
+	    text_width = Simp.prepare_text(g_font, "[Restart]");
+	    disToRestart := magnitude(restartPos - g_mousePosition);
+	    if (disToRestart <= xx text_width) {
+	    	color = PARRY_FX_COLOR;
+	    	if (g_inputStateThisFrame & .MousePressedLeft) {
+	    		// Restart the game
+	    		InitGame();
+	    	}
+	    }
+	    Simp.draw_prepared_text(g_font, xx restartPos.x - (text_width / 2), xx restartPos.y, color);
+
+
+	    color = Vector4.{1, 1, 1, 1.0};
+	    quitPos := screenCenter;
+	    quitPos.y += VEC2_DOWN.y * (height * 0.1);
+	    quitPos.x += VEC2_RIGHT.x * (width * 0.1);
+	    
+	    disToQuit := magnitude(quitPos - g_mousePosition);
+	    if (disToQuit <= xx text_width) {
+	    	color = PARRY_FX_COLOR;
+	    	if (g_inputStateThisFrame & .MousePressedLeft) {
+	    		// Restart the game
+	    		g_shouldQuitGame = true;
+	    	}
+	    }
+	    text_width = Simp.prepare_text(g_font, "[Quit]");
+
+	    Simp.draw_prepared_text(g_font, xx quitPos.x - (text_width / 2), xx quitPos.y, color);
     	return;
     }
 
     if (g_isPaused) {
 	    text_width = Simp.prepare_text(g_font, "GAME PAUSED!");
 	    Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx (height / 2), color);
+
+	    color = Vector4.{1, 1, 1, 1.0};
 	    text_width = Simp.prepare_text(g_font, "Resume");
-	    Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx ((height / 2) * 0.9), color);
+	    resumePos := Vector2.{(width * 0.5) - (text_width * 0.5), ((height * 0.5) * 0.9)};
+
+	    disToResume := magnitude(resumePos - g_mousePosition);
+	    if (disToResume <= xx text_width) {
+	    	color = PARRY_FX_COLOR;
+	    	if (g_inputStateThisFrame & .MousePressedLeft) {
+	    		// Restart the game
+	    		g_isPaused = false;
+	    	}
+	    }
+
+	    Simp.draw_prepared_text(g_font, xx resumePos.x, xx resumePos.y, color);
+	    color = Vector4.{1, 1, 1, 1.0};
 	    text_width = Simp.prepare_text(g_font, "Quit");
 	    Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx ((height / 2) * 0.8), color);
 
@@ -389,7 +452,7 @@ RestoreTexelOffsetSystem :: (delta: float) {
 		g_restoreTexelOffsetAfter -= delta;
 		return;
 	}
-	g_additionalTexelOffset = 1;
+	g_additionalTexelOffset = DEFAULT_TEXEL_OFFSET;
 }
 
 SpawnPointDefaultTravelDir :: (spawnPosition: SpawnPoint, entity: *Entity) -> Vector2 {
@@ -1010,30 +1073,30 @@ UpdatePlayer :: (entity: *Entity, delta: float) {
 		entity.state = .None;
 	}
 
+	if (g_inputStateThisFrame & .MousePressedLeft) {
+		PlayerShoot(entity);
+	}
+	if (g_inputStateThisFrame & .MousePressedRight && entity.parryAnimTimer <= 0) {
+		// Attempt to parry
+		entity.parryPressedTime = cast(float)g_currentTime;
+		entity.parryAnimTimer = PLAYER_SWEEP_ANIMATION_TIME;
+		entity.cacheColor = entity.color;
+		entity.state = .Parry;
+		entity.color = PARRY_FX_COLOR;
+	}
+
+	if (g_inputStateThisFrame & .SpacePressed && entity.flags & .HasBomb) {
+		DropBomb(entity.position);
+		entity.flags &= ~.HasBomb;
+	}
 	for event : events_this_frame {
-		if event.type == .QUIT {
-			g_shouldQuitGame = true;
-		}
 
 		if event.type != .KEYBOARD || !event.key_pressed {
         	break;
 	    }
-		if (event.key_code == .MOUSE_BUTTON_LEFT) {
-			PlayerShoot(entity);
-		}
 		if event.key_code == .MOUSE_BUTTON_RIGHT && entity.parryAnimTimer <= 0 {
-			// Attempt to parry
-			entity.parryPressedTime = cast(float)g_currentTime;
-			entity.parryAnimTimer = PLAYER_SWEEP_ANIMATION_TIME;
-			entity.cacheColor = entity.color;
-			entity.state = .Parry;
-			entity.color = PARRY_FX_COLOR;
 		}
 		
-		if (event.key_code == .SPACEBAR && entity.flags & .HasBomb) {
-			DropBomb(entity.position);
-			entity.flags &= ~.HasBomb;
-		}
 	}
 	
 	if input_button_states[cast(int) #char "W"] & .DOWN {
@@ -1132,6 +1195,8 @@ DecreaseEntitySizeOverTime :: (entity: *Entity, delta: float64) {
 }
 
 InputSystem :: () {
+	g_inputStateThisFrame = .None;
+
 	for event : events_this_frame {
 		if event.type == .QUIT {
 			g_shouldQuitGame = true;
@@ -1141,6 +1206,17 @@ InputSystem :: () {
         	break;
 	    }
 		
+		if (event.key_code == .MOUSE_BUTTON_LEFT) {
+			g_inputStateThisFrame |= .MousePressedLeft;
+		}
+		
+		if event.key_code == .MOUSE_BUTTON_RIGHT {
+			g_inputStateThisFrame |= .MousePressedRight;
+		}
+		if event.key_code == .SPACEBAR {
+			g_inputStateThisFrame |= .SpacePressed;
+		}
+
         if event.key_code == .ESCAPE {
         	if !g_isPaused {
 				g_timeScaleCache = g_timeScale;        		
@@ -1379,7 +1455,23 @@ DrawFrameEnd :: () {
 }
 
 InitGame :: () {
+    g_shouldQuitGame = false;
+    g_timeScale = 1;
+    g_additionalTexelOffset = DEFAULT_TEXEL_OFFSET;
+    g_waveNumber = 1;
+    g_enemiesKilledThisWave = 0;
+    g_waveAnnouncementTimer = 0;
+    g_enemiesSpawnedThisWave = 0;
+    g_isWaveCleared = false;
+    g_newWaveAnnouncement = false;
+    g_isPaused = false;
+    g_score = 0;
+    g_shakeTime = 0;
+    g_shakeStrength = 0;
+    g_cameraOffset = Vector2.{0, 0};
+
     // Initialize our entity storage
+	memset(g_entities.data, 0, g_entities.count * size_of(type_of(g_entities.data.*)));
 	InitQueue(*g_availableEntities, ENTITY_MAX_COUNT);
     
 	for idx : 0..ENTITY_MAX_COUNT - 1 {
