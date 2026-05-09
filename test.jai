@@ -402,10 +402,10 @@ DrawUI :: (delta: float) {
 
 	    color = Vector4.{1, 1, 1, 1.0};
 	    text_width = Simp.prepare_text(g_font, "Resume");
-	    resumePos := Vector2.{(width * 0.5) - (text_width * 0.5), ((height * 0.5) * 0.9)};
+	    resumePos := Vector2.{(width * 0.5), ((height * 0.5) * 0.8)};
 
 	    disToResume := magnitude(resumePos - g_mousePosition);
-	    if (disToResume <= xx text_width) {
+	    if (disToResume <= 50) {
 	    	color = PARRY_FX_COLOR;
 	    	if (g_inputStateThisFrame & .MousePressedLeft) {
 	    		// Restart the game
@@ -413,10 +413,19 @@ DrawUI :: (delta: float) {
 	    	}
 	    }
 
-	    Simp.draw_prepared_text(g_font, xx resumePos.x, xx resumePos.y, color);
+	    Simp.draw_prepared_text(g_font, xx (resumePos.x - (text_width * 0.5)), xx resumePos.y, color);
 	    color = Vector4.{1, 1, 1, 1.0};
 	    text_width = Simp.prepare_text(g_font, "Quit");
-	    Simp.draw_prepared_text(g_font, xx (width / 2) - (text_width / 2), xx ((height / 2) * 0.8), color);
+	    quitPos := Vector2.{(width * 0.5), ((height * 0.5) * 0.6)};
+	    disToQuitPos := magnitude(quitPos - g_mousePosition);
+	    if (disToQuitPos <= 50) {
+	    	color = PARRY_FX_COLOR;
+	    	if (g_inputStateThisFrame & .MousePressedLeft) {
+	    		// Restart the game
+	    		g_shouldQuitGame = true;
+	    	}
+	    }
+	    Simp.draw_prepared_text(g_font, xx (quitPos.x - (text_width * 0.5)), xx quitPos.y, color);
 
 	    g_audioStream.user_flags |= .PAUSED_DUE_TO_MENU;
         g_audioStream.current_rate = 0;
