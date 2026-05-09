@@ -11,6 +11,7 @@ EEntityType :: enum u16 {
 	VFX :: 32;
 	BombHolder :: 64;
 	Shield :: 128;
+	BlackHole :: 256;
 
 	CollisionEnabledLayer :: Player | Enemy | Bullet | Pickup | BombHolder | Shield;
 }

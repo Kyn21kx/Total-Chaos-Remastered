@@ -93,6 +93,22 @@ g_font: *Simp.Dynamic_Font;
 g_additionalTexelOffset: float = DEFAULT_TEXEL_OFFSET;
 g_restoreTexelOffsetAfter: float = 0;
 
+CHAOS_PER_KILL :: 0.05;
+CHAOS_PER_BOMB :: 0.1;
+CHAOS_PER_BOUNCE :: 0.001;
+CHAOS_PER_PARRY :: 0.1;
+CHAOS_DEPLETE_WAIT_TIME :: 1;
+CHAOS_DEPLETE_SPEED :: 0.05;
+CHAOS_PENALTY_ON_DMG :: 0.1;
+
+CHAOS_MULT_PER_BULLET :: 0.01;
+
+g_chaosDepleteTimer: float = 0;
+g_chaosMultiplier: float = 1;
+g_chaosPercentage: float = 0;
+g_chaosPercentagePrev: float = 0;
+g_chaosModeDuration: float = 0;
+
 g_sceneTexture: *Simp.Texture;
 g_bloomTempPass: *Simp.Texture;
 g_window: Window_Type;
@@ -330,6 +346,8 @@ DrawUI :: (delta: float) {
     Simp.draw_prepared_text(g_font, xx (width / 2), xx (height * 0.95), color);
 
     screenCenter := Vector2.{xx (width / 2), xx (height / 2)};
+
+    DrawChaosModeBar(delta);
     
     if (g_waveAnnouncementTimer > 0 && !g_isPaused) {
         if (g_newWaveAnnouncement) {
@@ -518,6 +536,49 @@ DrawHealthBar :: (entity: *Entity, delta: float) {
     DrawRect(healthPos, Vector2.{barWidth * healthPct, barHeight}, .{0.0, 1.0, 0.0, 1.0});
 }
 
+DrawChaosModeBar :: (delta: float) {
+	g_chaosPercentagePrev = g_chaosPercentage;
+	g_chaosDepleteTimer -= delta;
+	if (g_chaosDepleteTimer <= 0 && !g_newWaveAnnouncement) {
+		g_chaosPercentage -= delta * CHAOS_DEPLETE_SPEED;
+		g_chaosMultiplier -= delta * CHAOS_DEPLETE_SPEED;
+	}
+	g_chaosPercentage = clamp(g_chaosPercentage, 0, 1);
+	g_chaosMultiplier = clamp(g_chaosMultiplier, 1, 100);
+
+	screenCenterPos := Vector2.{width * 0.75, height * 0.9};
+	barPos := screenCenterPos;
+
+
+    barWidth  : float = width * 0.2;
+    barHeight : float = 16.0;
+    
+    lerpedPct := lerp(g_chaosPercentagePrev, g_chaosPercentage, delta);
+
+    // Background (dark red)
+    DrawRect(barPos, Vector2.{barWidth, barHeight}, .{0.4, 0.0, 0.0, 1.0});
+    // Foregrround immediate
+    DrawRect(barPos, Vector2.{barWidth * g_chaosPercentage, barHeight}, .{0.2, 0.2, 1.0, 0.3});
+    // Foreground lerped
+    DrawRect(barPos, Vector2.{barWidth * lerpedPct, barHeight}, .{0.0, 0.2, 1.0, 0.2});
+
+	multText := tprint("x%", g_chaosMultiplier);
+    text_width := Simp.prepare_text(g_font, multText);
+    barPos.y -= barHeight * 1.2;
+    Simp.draw_prepared_text(g_font, xx barPos.x, xx barPos.y, POWER_UP_COLOR);
+}
+
+AddChaos :: (amount: float) {
+	g_chaosPercentage += amount * g_chaosMultiplier;
+	g_chaosDepleteTimer = CHAOS_DEPLETE_WAIT_TIME;
+}
+
+
+AddChaosMultiplier :: (multAmount: float) {
+	g_chaosMultiplier += multAmount;
+	g_chaosMultiplier = clamp(g_chaosMultiplier, 1, 3);
+}
+
 DrawStaminaBar :: (entity: *Entity, delta: float) {
 	if (entity.type != .Player) {
 		return;
@@ -588,6 +649,7 @@ ShootBullet :: (position: Vector2, shootDir: Vector2, color: Vector4, collisionM
 		collisionMask = collisionMask
 	};
 	
+	AddChaosMultiplier(CHAOS_MULT_PER_BULLET);
 	AddEntity(bullet);
 }
 
@@ -712,6 +774,7 @@ DropBomb :: (position: Vector2) {
 	g_timeScale = SLOW_TIME_SCALE;
 	g_restoreTimeScaleAfter = 1.5;
 	g_bombHolderId = AddEntity(entity);
+	AddChaos(CHAOS_PER_BOMB);
 }
 
 EnemyShoot :: (entity: *Entity, delta: float) {
@@ -874,7 +937,8 @@ BounceOff :: (first: *Entity, second: *Entity, keepFirstStatic: bool = false) {
 	}
 	reflectB := CalculateReflectionVector(second.velocity, normal);
 	second.velocity = reflectB;
-	
+
+	AddChaos(CHAOS_PER_BOUNCE);
 }
 
 CalcPowerUpsBitmask :: () -> EEntityFlags {
@@ -1004,6 +1068,7 @@ OnDamaged :: (entity: *Entity, damageSrc: *Entity) -> bool {
 		ShootBullet(entity.position, RotateVec2(direction, -45), PARRY_FX_COLOR, .Enemy, DEFAULT_BULLET_SPEED * 1.5);
 		PARRY_SCORE_BONUS :: 7;
 		IncreaseScore(PARRY_SCORE_BONUS);
+		AddChaos(CHAOS_PER_PARRY);
 		return false;
 	}
 	entity.cacheColor = entity.color;
@@ -1023,7 +1088,7 @@ BombUpdate :: (entity: *Entity, delta: float) {
 	if (entity.remainingLifetime <= 0) {
 		RemoveEntity(entity);
 		return;
-	} 
+	}
 	entity.remainingLifetime -= delta;
 	// Fade the color's opacity
 	lerpingBlend := entity.remainingLifetime / entity.initialLifetime;
@@ -1154,6 +1219,7 @@ HealthSystem :: (entity: *Entity, delta: float) {
 			if (entity.flags & .ExplodeOnDeath) {
 				g_timeScale = SLOW_TIME_SCALE;
 				g_restoreTimeScaleAfter = 0.5;
+				AddChaosMultiplier(0.25);
 				for i : 0..12 {
 					ShootShard(entity.position, RotateVec2(entity.velocity, cast(float)i * 30.0), cast(bool)(entity.flags & .DamageAlliesOnExplosion));
 				}
@@ -1163,6 +1229,7 @@ HealthSystem :: (entity: *Entity, delta: float) {
 					EnemyDeathParticleVFX(entity.position, RotateVec2(entity.velocity, RandFloatInRange(0, 360)));
 				}
 			}
+			AddChaos(CHAOS_PER_KILL);
 			g_enemyCount -= 1;
 		}
 		RemoveEntity(entity);
@@ -1478,6 +1545,9 @@ InitGame :: () {
     g_shakeTime = 0;
     g_shakeStrength = 0;
     g_cameraOffset = Vector2.{0, 0};
+    g_chaosMultiplier = 1;
+    g_chaosPercentagePrev = 0;
+    g_chaosPercentage = 0;
 
     // Initialize our entity storage
 	memset(g_entities.data, 0, g_entities.count * size_of(type_of(g_entities.data.*)));
