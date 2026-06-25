@@ -9,6 +9,7 @@
 #load "entity.jai";
 #load "random_utils.jai";
 #load "queue.jai";
+#load "shapes3d.jai";
 using Sound :: #import "Sound_Player"(VERBOSE = false);
 
 SpawnPoint :: enum u8 {
@@ -76,10 +77,14 @@ SPLIT_BULLET_COUNT :: 5;
 
 ENTITY_MAX_COUNT :: 2048;
 
+BLACK_HOLE_MAX_COUNT :: 10;
+
 DEFAULT_TEXEL_OFFSET :: 1.5;
 
 g_shouldQuitGame := false;
 g_entities : [ENTITY_MAX_COUNT] Entity;
+// Small subset of the entities to check for black holes to avoid looping all entities to find a black hole
+g_blackHoleCache: [BLACK_HOLE_MAX_COUNT] s64;
 g_availableEntities: Queue(s64);
 g_mousePosition: Vector2;
 g_inputStateThisFrame: EMouseButtonState = .None;
@@ -1367,6 +1372,7 @@ Update :: () {
 	RestoreTexelOffsetSystem(current_dt);
 
 	SpawnEntities(delta);
+	// draw_box_3d(Vector3.{0, 0, 0}, .{1, 2, 1}, .{0, 35, 0}, Vector4.{1.0, 0.0, 1.0, 1.0}, DEFAULT_CAMERA_3D, xx width, xx height);
 	for entity : g_entities {
 		if (IsGameOver()) {
 			g_timeScale = 0.1;
@@ -1399,7 +1405,7 @@ Update :: () {
 		EnemyShoot(*entity, current_dt);
 		HandleAnimations(*entity, current_dt);
 		ApplyMovement(*entity, current_dt);
-		HealthSystem(*entity, current_dt);
+			HealthSystem(*entity, current_dt);
 	}
 
 	DrawUI(current_dt);
