@@ -59,7 +59,7 @@ DEFAULT_COLLISION_MASK : EEntityType : .CollisionEnabledLayer;
 // }
 
 Entity :: struct {
-	id: s64 = -1;
+	id: u64 = 0;
 	position : Vector2;
 	velocity : Vector2;
 	cacheVelocity: Vector2;
@@ -90,4 +90,30 @@ Entity :: struct {
 
 	flags: EEntityFlags;
 	type : EEntityType;
+}
+
+g_collisionCache: [size_of(EEntityType) * 8][..] u64;
+
+// DeBruijn-like algorithm for a log2(n)
+ExtractBitIndex :: (layer: u64) -> u64 {
+
+	TAB64 : [64] u64 : .[
+	    63,  0, 58,  1, 59, 47, 53,  2,
+	    60, 39, 48, 27, 54, 33, 42,  3,
+	    61, 51, 37, 40, 49, 18, 28, 20,
+	    55, 30, 34, 11, 43, 14, 22,  4,
+	    62, 57, 46, 52, 38, 26, 32, 41,
+	    50, 36, 17, 19, 29, 10, 13, 21,
+	    56, 45, 25, 31, 35, 16,  9, 12,
+	    44, 24, 15,  8, 23,  7,  6,  5
+	];
+
+    layer |= layer >> 1;
+    layer |= layer >> 2;
+    layer |= layer >> 4;
+    layer |= layer >> 8;
+    layer |= layer >> 16;
+    layer |= layer >> 32;
+
+    return TAB64[(cast(u64)((layer - (layer >> 1))*0x07EDD5E59A4E28C2)) >> 58];
 }
