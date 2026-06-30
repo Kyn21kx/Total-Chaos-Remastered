@@ -6,8 +6,8 @@ Vector3i :: struct {
     z: s32;
 }
 
-CELL_SIZE :: 0.9;
-INV_CELL_SIZE :: 1 / CELL_SIZE;
+CELL_SIZE :: 200;
+INV_CELL_SIZE :: 1.0 / CELL_SIZE;
 
 SpatialHashGrid :: struct {
 	entitiesAtCell: Table(u64, [..]u64);
@@ -55,6 +55,28 @@ SpatialHashCell :: (cell: Vector3i) -> u64 {
 
 	// Combine using prime multiplication and XOR
 	return cast(u64)((x * P1) ^ (y * P2) ^ (z * P3));
+}
+
+SpatialGridDebugDraw :: (cameraOffset: Vector3, screenWidth: float, screenHeight: float) {
+    if (screenWidth <= 0 || screenHeight <= 0) return;
+
+    gridColor := Vector4.{0.15, 0.15, 0.15, 0.4};
+    lineWidth: float = 1.0;
+
+    startCellX := cast(s32)floor((-cameraOffset.x) * INV_CELL_SIZE);
+    startCellY := cast(s32)floor((-cameraOffset.y) * INV_CELL_SIZE);
+    endCellX := cast(s32)ceil((screenWidth - cameraOffset.x) * INV_CELL_SIZE);
+    endCellY := cast(s32)ceil((screenHeight - cameraOffset.y) * INV_CELL_SIZE);
+
+    for cx: startCellX .. endCellX {
+        sx := cast(float)cx * CELL_SIZE + cameraOffset.x;
+        DrawRect(Vector2.{sx, 0}, Vector2.{lineWidth, screenHeight}, gridColor);
+    }
+
+    for cy: startCellY .. endCellY {
+        sy := cast(float)cy * CELL_SIZE + cameraOffset.y;
+        DrawRect(Vector2.{0, sy}, Vector2.{screenWidth, lineWidth}, gridColor);
+    }
 }
 
 // GetNeighborsClose(const Vector3 &position, const real_t invCellSize) {

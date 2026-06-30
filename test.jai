@@ -1451,6 +1451,7 @@ Update :: () {
 
 
 	SpawnEntities(delta);
+	SpatialGridDebugDraw(g_cameraOffset, cast(float)width, cast(float)height);
 	for entity : g_entities {
 		tracy.ZoneScoped("Entity Iteration");
 		if (IsGameOver()) {
