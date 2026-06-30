@@ -13,24 +13,32 @@ SpatialHashGrid :: struct {
 	entitiesAtCell: Table(u64, [..]u64);
 }
 
-SpatialRegisterEntityAt :: (spatialGrid: SpatialHashGrid, entity: u64, position: Vector3) {
+SpatialRegisterEntityAt :: (spatialGrid: *SpatialHashGrid, entity: u64, position: Vector3) {
 	cellIdx : Vector3i = SpatialGetCellIndex(position);
 	hashedCell : u64 = SpatialHashCell(cellIdx);
 	foundEntities : *[..]u64 = table_find_pointer(*(spatialGrid.entitiesAtCell), hashedCell);
 	if (foundEntities == null) {
 		newArr: [..]u64;
-		foundEntities = *newArr;
-		table_add(*(spatialGrid.entitiesAtCell), hashedCell, newArr);
-		print("Count: %\n", spatialGrid.entitiesAtCell.count);
+		foundEntities = table_add(*(spatialGrid.entitiesAtCell), hashedCell, newArr);
+		// print("Count: %\n", spatialGrid.entitiesAtCell.count);
 	}
 
 	array_add(foundEntities, entity);
+	// print("Entities at (%, %): %\n", cellIdx.x, cellIdx.y, foundEntities.count);
+	// for entity : << foundEntities {
+	// 	print("* %:\n\t", entity);
+	// }
+}
+
+SpatialGetEntitiesAt :: (spatialGrid: *SpatialHashGrid, hashedCell: u64) -> *[..]u64 {
+	arrRef := table_find_pointer(*(spatialGrid.entitiesAtCell), hashedCell);
+	return arrRef;
 }
 
 SpatialClear :: (spatialGrid: *SpatialHashGrid) {
-	for spatialGrid.entitiesAtCell {
+	for *(spatialGrid.entitiesAtCell) {
         key, value := it_index, it;
-		array_reset_keeping_memory(*value);
+        value.count = 0;
 	}
 }
 
@@ -49,15 +57,15 @@ SpatialHashCell :: (cell: Vector3i) -> u64 {
 	P3 : u32 : 83492791;
 
 	// Reinterpret cast to uint32_t (preserves bit pattern)
-	x: u32 = cast(u32)cell.x;
-	y: u32 = cast(u32)cell.y;
-	z: u32 = cast(u32)cell.z;
+	x: u32 = cast,no_check(u32)cell.x;
+	y: u32 = cast,no_check(u32)cell.y;
+	z: u32 = cast,no_check(u32)cell.z;
 
 	// Combine using prime multiplication and XOR
 	return cast(u64)((x * P1) ^ (y * P2) ^ (z * P3));
 }
 
-SpatialGridDebugDraw :: (cameraOffset: Vector3, screenWidth: float, screenHeight: float) {
+SpatialGridDebugDraw :: (spatialGrid: *SpatialHashGrid, cameraOffset: Vector3, screenWidth: float, screenHeight: float) {
     if (screenWidth <= 0 || screenHeight <= 0) return;
 
     gridColor := Vector4.{0.15, 0.15, 0.15, 0.4};
@@ -67,6 +75,7 @@ SpatialGridDebugDraw :: (cameraOffset: Vector3, screenWidth: float, screenHeight
     startCellY := cast(s32)floor((-cameraOffset.y) * INV_CELL_SIZE);
     endCellX := cast(s32)ceil((screenWidth - cameraOffset.x) * INV_CELL_SIZE);
     endCellY := cast(s32)ceil((screenHeight - cameraOffset.y) * INV_CELL_SIZE);
+
 
     for cx: startCellX .. endCellX {
         sx := cast(float)cx * CELL_SIZE + cameraOffset.x;

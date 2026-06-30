@@ -11,7 +11,7 @@ quad_vbo       : u32;
 
 
 DrawCircle :: (center: Vector2, radius: float, color: Vector4, segments: int = 16) {
-    // Simp.set_shader_for_color(true);
+    Simp.set_shader_for_color(true);
 
     step := (2.0 * PI) / cast(float) segments;
 
@@ -38,7 +38,7 @@ DrawCircle :: (center: Vector2, radius: float, color: Vector4, segments: int = 1
 
 
 DrawGradientCircle :: (center: Vector2, radius: float, color: Vector4, segments: int = 32) {
-    // Simp.set_shader_for_color(true);
+    Simp.set_shader_for_color(true);
     step := (2.0 * PI) / cast(float) segments;
 
     innerRadius := radius * 0.7;
@@ -170,7 +170,7 @@ DrawStar :: (center: Vector2, outer_radius: float, inner_radius: float, points: 
 DrawTriangle :: (center: Vector2, size: float, angle: float, color: Vector4) {
     // Define the three points of the triangle relative to center
     // Pointing up by default
-    // Simp.set_shader_for_color(true);
+    Simp.set_shader_for_color(true);
     local_points := Vector2.[
         .{0.0,          size},        // top
         .{-size * 0.75, -size * 0.5}, // bottom left

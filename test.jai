@@ -1,6 +1,6 @@
 #import "Basic";
 #import "Window_Creation";
-using tracy :: #import "tracy"(IMPORT_MODE = .CLIENT);
+// using tracy :: #import "tracy"(IMPORT_MODE = .CLIENT, ENABLED = false);
 #import "Input";
 #import "Math";
 #import "System";
@@ -44,6 +44,7 @@ PICKUP_LIFETIME :: 10;
 DEFAULT_BULLET_DAMAGE : float : 10; 
 DEFAULT_HEALTH : float : 10; 
 DEFAULT_BULLET_SIZE_PX :: 20;
+DEFAULT_BLACK_HOLE_SIZE_PX :: 200;
 
 STAMINA_PER_BULLET :: 30;
 DEFAULT_PLAYER_STAMINA :: 100;
@@ -207,7 +208,7 @@ ToVec2 :: (v: Vector3) -> Vector2 {
 }
 
 UpdateShake :: (delta: float) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
     if g_shakeStrength > 0 {
         g_shakeTime += delta * 20.0;
         g_shakeStrength  =  max(0.0, g_shakeStrength - SHAKE_DECAY * delta);
@@ -225,7 +226,7 @@ IsGameOver :: () -> bool {
 }
 
 UpdateCollisionCache :: (p_entities: [] Entity) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	for *bucket : g_collisionCache {
 		array_reset_keeping_memory(bucket);
 	}
@@ -240,12 +241,12 @@ UpdateCollisionCache :: (p_entities: [] Entity) {
 		// Get the bit where it belongs
 		index := ExtractBitIndex(cast(u64)entity.type);
 		array_add(*(g_collisionCache[index]), entity.id);
-		SpatialRegisterEntityAt(g_spatialGrid, entity.id, entity.position);
+		SpatialRegisterEntityAt(*g_spatialGrid, entity.id, entity.position);
 	}
 }
 	
 DrawEntity :: (entity: *Entity) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	entitySize := entity.shapeSize * entity.scaleFactor;
 	if (entity.shape == .Circle) {
 		DrawCircle(ToVec2(entity.position + g_cameraOffset), entitySize, entity.color);
@@ -296,7 +297,7 @@ StartNewWave :: () {
 }
 
 CheckWaveCompletion :: () {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
     if (g_isWaveCleared || g_newWaveAnnouncement) return;
     
     if (g_enemiesKilledThisWave >= g_enemiesToKillThisWave) {
@@ -307,7 +308,7 @@ CheckWaveCompletion :: () {
 }
 
 CalculateRandomSpawnPoint :: (outSpawnPoint: *SpawnPoint) -> Vector3 {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	spotNumericMin := cast(u8)SpawnPoint.Top;
 	spotNumericMax := (cast(u8)SpawnPoint.Right) + 1;
 	<< outSpawnPoint = cast(SpawnPoint)RandIntInRange(spotNumericMin, spotNumericMax);
@@ -321,7 +322,7 @@ CalculateRandomSpawnPoint :: (outSpawnPoint: *SpawnPoint) -> Vector3 {
 }
 
 DrawPowerUpsUI :: () {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	prevItemPos := Vector2.{ width * 0.33, height * 0.9};
 	text: string;
 	player : *Entity = *(g_entities[g_playerId]);
@@ -366,7 +367,7 @@ DrawPowerUpsUI :: () {
 }
 
 DrawUI :: (delta: float) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	scoreBlendSpeed : float : 2;
 	if (g_scoreBlendTimer > 0) {
 		g_scoreBlendTimer -= delta * scoreBlendSpeed;
@@ -516,7 +517,7 @@ RestoreTimeScaleSystem :: (unscaledDelta: float) {
 }
 
 RestoreTexelOffsetSystem :: (delta: float) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	if (g_isPaused) return;
 	if (g_restoreTexelOffsetAfter > 0) {
 		g_restoreTexelOffsetAfter -= delta;
@@ -558,14 +559,14 @@ SpawnEntities :: (delta: float64) {
 }
 
 HandleCooldownTimers :: (entity: *Entity, delta: float) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	if (entity.shootCooldownTimer > 0) {
 		entity.shootCooldownTimer -= delta;
 	}
 }
 
 DrawHealthBar :: (entity: *Entity, delta: float) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	if (entity.type != .Enemy && entity.type != .Player) {
 		return;
 	}
@@ -579,10 +580,16 @@ DrawHealthBar :: (entity: *Entity, delta: float) {
 
     healthPct := entity.health / entity.originalHealth;
     DrawRect(healthPos, Vector2.{barWidth * healthPct, barHeight}, .{0.0, 1.0, 0.0, 1.0});
+
+    // clampedPos := SpatialGetCellIndex(entity.position);
+    // text := tprint("ClampedPos: (%, %)", clampedPos.x, clampedPos.y);
+    // Simp.prepare_text(g_font, text);
+    // Simp.draw_prepared_text(g_font, xx (entity.position.x), xx (entity.position.y + 3), .{1, 1, 1, 1});
+
 }
 
 DrawChaosModeBar :: (delta: float) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	g_chaosPercentagePrev = g_chaosPercentage;
 	g_chaosDepleteTimer -= delta;
 	if (g_chaosDepleteTimer <= 0 && !g_newWaveAnnouncement) {
@@ -615,20 +622,20 @@ DrawChaosModeBar :: (delta: float) {
 }
 
 AddChaos :: (amount: float) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	g_chaosPercentage += amount * g_chaosMultiplier;
 	g_chaosDepleteTimer = CHAOS_DEPLETE_WAIT_TIME;
 }
 
 
 AddChaosMultiplier :: (multAmount: float) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	g_chaosMultiplier += multAmount;
 	g_chaosMultiplier = clamp(g_chaosMultiplier, 1, 3);
 }
 
 DrawStaminaBar :: (entity: *Entity, delta: float) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	if (entity.type != .Player) {
 		return;
 	}
@@ -660,7 +667,7 @@ DrawStaminaBar :: (entity: *Entity, delta: float) {
 }
 	
 ApplyMovement :: (entity: *Entity, deltaTime: float) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	entity.position += entity.velocity * deltaTime * entity.speed;
 	entity.rotation += entity.rotationVelocity * deltaTime;
 
@@ -828,7 +835,7 @@ DropBomb :: (position: Vector3) {
 }
 
 EnemyShoot :: (entity: *Entity, delta: float) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	// Get the direction of the player
 	if (entity.type != .Enemy) return;
 
@@ -872,8 +879,8 @@ PlayerShoot :: (entity: *Entity) {
 	shootDir := normalize(ToVec3(g_mousePosition)- entity.position);
 	ShootBullet(entity.position, shootDir, PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
 	if (entity.flags & .HasSplitBullet) {
-		ShootBullet(entity.position + (VEC3_RIGHT * 2), RotateVec2(shootDir, 90), PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
-		ShootBullet(entity.position + (VEC3_LEFT * 2), RotateVec2(shootDir, -90), PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
+		ShootBullet(entity.position + (VEC3_RIGHT * 2), RotateVec2(shootDir, 90), PARRY_FX_COLOR, .Enemy, DEFAULT_BULLET_SPEED * 1.5);
+		ShootBullet(entity.position + (VEC3_LEFT * 2), RotateVec2(shootDir, -90), PARRY_FX_COLOR, .Enemy, DEFAULT_BULLET_SPEED * 1.5);
 		g_splitBulletsLeft -= 1;
 		
 		if (g_splitBulletsLeft <= 0) {
@@ -903,9 +910,26 @@ IncreaseScore :: (diff: int) {
 	if (IsGameOver()) return;
 	g_score += diff;
 }
+
+GetFirstNeighborEnemy :: (cell: Vector3, except: u64) -> u64 {
+	cellIdx := SpatialGetCellIndex(cell);
+
+	for dx : -1 .. 1 {
+		for dy : -1.. 1 {
+			h : u64 = SpatialHashCell(.{ cast(s32)(cellIdx.x + dx), cast(s32)(cellIdx.y + dy), cast(s32)(cellIdx.z)});
+			entitiesAt : *[..]u64 = SpatialGetEntitiesAt(*g_spatialGrid, h);
+			if (entitiesAt != null) {
+				for neighbor : << entitiesAt {
+					if (g_entities[neighbor].type == .Enemy && neighbor != except) return neighbor;
+				}
+			}
+		}
+	}
+	return 0;
+}
 	
 HandleCollision :: (first: *Entity, second: *Entity) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	if (second.type == .BombHolder && first.type == .Enemy) {
 		first.health -= 9999;
 		g_timeScale = SLOW_TIME_SCALE;
@@ -927,6 +951,22 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 		second.state = .Knockback;
 		OnDamaged(second, first);
 		RemoveEntity(first);
+
+		if (g_augmentBits & .ChaosChain) {
+			neighborEnemyId : u64 = GetFirstNeighborEnemy(second.position, second.id);
+			if (neighborEnemyId != 0) {
+				dir := normalize(g_entities[neighborEnemyId].position - second.position);
+				ShootBullet(second.position, dir, PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
+			}
+		}
+		if (g_augmentBits & .GetEmClose) {
+			blackHole : Entity = .{
+				position = second.position,
+				shape = .GradientCircle,
+				shapeSize = DEFAULT_BLACK_HOLE_SIZE_PX
+			};
+		}
+
 		for i : 0..6 {
 			BulletCollisionParticleVFX(first.position, RotateVec2(first.velocity, i * 60.0));
 		}
@@ -968,7 +1008,7 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 }
 
 BounceOff :: (first: *Entity, second: *Entity, keepFirstStatic: bool = false) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	// Calculate the normal of the collision
 	diff := second.position - first.position;
 
@@ -1060,7 +1100,7 @@ DropLoot :: (position: Vector3) {
 }
 	
 CollisionSystem :: (entity: *Entity) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	// Now we choose the masks we want to collide with
 	TOTAL_MASKS : u64 : size_of(EEntityType) * 8;
 
@@ -1145,7 +1185,7 @@ OnDamaged :: (entity: *Entity, damageSrc: *Entity) -> bool {
 
 
 BombUpdate :: (entity: *Entity, delta: float) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	if (entity.remainingLifetime <= 0) {
 		RemoveEntity(entity);
 		return;
@@ -1183,7 +1223,7 @@ HandleSpecialStates :: (entity: *Entity, delta: float) {
 }
 
 HandleAnimations :: (entity: *Entity, delta: float) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	PARRY_ANIM_SPEED :: 20.0;
 	if (entity.parryAnimTimer > 0) {
 		// Rotate the entity
@@ -1193,7 +1233,7 @@ HandleAnimations :: (entity: *Entity, delta: float) {
 }
 	
 UpdatePlayer :: (entity: *Entity, delta: float) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	entity.velocity = Vector3.{0, 0, 0};
 
 	if (entity.damageAnimTimer > 0) {
@@ -1265,7 +1305,7 @@ UpdatePlayer :: (entity: *Entity, delta: float) {
 }
 
 HealthSystem :: (entity: *Entity, delta: float) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	if (entity.type != .Enemy && entity.type != .Player) {
 		return;
 	}
@@ -1302,7 +1342,7 @@ HealthSystem :: (entity: *Entity, delta: float) {
 }
 
 FadeEntityOverTime :: (entity: *Entity, delta: float64) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	if !(entity.flags & .HasLifetime) {
 		return;
 	}
@@ -1321,7 +1361,7 @@ FadeEntityOverTime :: (entity: *Entity, delta: float64) {
 }
 
 DecreaseEntitySizeOverTime :: (entity: *Entity, delta: float64) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	if !(entity.flags & .DecreaseSizeOverLifeTime) {
 		return;
 	}
@@ -1337,7 +1377,7 @@ DecreaseEntitySizeOverTime :: (entity: *Entity, delta: float64) {
 }
 
 InputSystem :: () {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	g_inputStateThisFrame = .None;
 
 	for event : events_this_frame {
@@ -1376,7 +1416,7 @@ InputSystem :: () {
 
 
 FollowSystem :: (entity: *Entity) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	if !(entity.flags & .ShouldFollowPlayer) return;
 	playerPos: Vector3 = g_entities[g_playerId].position;
 	rawVec := playerPos - entity.position;
@@ -1392,7 +1432,7 @@ FollowSystem :: (entity: *Entity) {
 }
 
 UpdateWaveSystem :: (delta: float) {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
     if (g_waveAnnouncementTimer > 0) {
         g_waveAnnouncementTimer -= delta;
         
@@ -1418,8 +1458,8 @@ UpdateWaveSystem :: (delta: float) {
 }
 
 Update :: () {
-	tracy.FrameMark();
-	tracy.ZoneScoped();
+// 	tracy.FrameMark();
+// 	tracy.ZoneScoped();
     now := seconds_since_init();
     unscaledDelta: float64 = (now - last_time);
     delta : float64 = unscaledDelta * cast(float64)g_timeScale;
@@ -1451,9 +1491,9 @@ Update :: () {
 
 
 	SpawnEntities(delta);
-	SpatialGridDebugDraw(g_cameraOffset, cast(float)width, cast(float)height);
+	SpatialGridDebugDraw(*g_spatialGrid, g_cameraOffset, cast(float)width, cast(float)height);
 	for entity : g_entities {
-		tracy.ZoneScoped("Entity Iteration");
+// 		tracy.ZoneScoped("Entity Iteration");
 		if (IsGameOver()) {
 			g_timeScale = 0.1;
 			g_additionalTexelOffset = 10.0;
@@ -1496,7 +1536,7 @@ DEFAULT_ENEMY_SIZE_PX :: 25;
 DEFAULT_ENEMY_SCORE :: 5;
 
 CreateEnemy :: (position: Vector3) -> Entity {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	shape := EShape.Triangle;
 	flags := EEntityFlags.None;
 	health := DEFAULT_ENEMY_HEALTH * GetCurrentWaveEnemyHealthMult();
@@ -1593,7 +1633,7 @@ InitRenderingPipeline :: () {
 
 DrawFrameBegin :: () {
 	// Draw the scene to the texture
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	Simp.set_render_target(g_sceneTexture);
 	Simp.set_shader_for_color(true);
     Simp.clear_render_target(.0, .01, .03, 1);
@@ -1601,7 +1641,7 @@ DrawFrameBegin :: () {
 }
 
 DrawFrameEnd :: () {
-	tracy.ZoneScoped();
+// 	tracy.ZoneScoped();
 	Simp.set_render_target(g_bloomTempPass);
 
     Simp.set_shader_for_images(g_sceneTexture);
@@ -1681,13 +1721,13 @@ main :: () {
 	InitGame();
 
     while !g_shouldQuitGame {
-    	tracy.ZoneScoped("Main loop");
+//     	tracy.ZoneScoped("Main loop");
     	{
-    		tracy.ZoneScoped("TempStorageReset");
+//     		tracy.ZoneScoped("TempStorageReset");
 			reset_temporary_storage();
 	    }
 	    {
-    		tracy.ZoneScoped("UpdateWindowEvents");
+//     		tracy.ZoneScoped("UpdateWindowEvents");
 			update_window_events();	
 	    }
 	    	
@@ -1701,11 +1741,11 @@ main :: () {
         DrawFrameEnd();
 
         {
-			tracy.ZoneScoped("SoundUpdate");
+// 			tracy.ZoneScoped("SoundUpdate");
 	        Sound.update();
         }
 		{
-			tracy.ZoneScoped("BufferSwap");
+// 			tracy.ZoneScoped("BufferSwap");
 	        Simp.swap_buffers(g_window);
 		}
 	}
