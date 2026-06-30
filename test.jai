@@ -60,10 +60,10 @@ RECOVER_FROM_DMG_TIME_S : float : 0.2;
 
 PARRY_FX_COLOR :: Vector4.{0.01,1,0.1, 1};
 
-VEC2_DOWN :: Vector2.{0, -1};
-VEC2_UP :: Vector2.{0, 1};
-VEC2_LEFT :: Vector2.{-1, 0};
-VEC2_RIGHT :: Vector2.{1, 0};
+VEC3_DOWN :: Vector3.{0, -1, 0};
+VEC3_UP :: Vector3.{0, 1, 0};
+VEC3_LEFT :: Vector3.{-1, 0, 0};
+VEC3_RIGHT :: Vector3.{1, 0, 0};
 
 PLAYER_SWEEP_ANIMATION_TIME :: 0.2;
 
@@ -88,6 +88,7 @@ g_shouldQuitGame := false;
 g_entities : [ENTITY_MAX_COUNT] Entity;
 // Small subset of the entities to check for black holes to avoid looping all entities to find a black hole
 g_blackHoleCache: [BLACK_HOLE_MAX_COUNT] u64;
+g_spatialGrid: SpatialHashGrid;
 g_availableEntities: Queue(u64);
 g_mousePosition: Vector2;
 g_inputStateThisFrame: EMouseButtonState = .None;
@@ -164,7 +165,7 @@ g_score : int = 0;
 g_prevScore : int = 0;
 
 
-g_cameraOffset := Vector2.{0, 0};
+g_cameraOffset := Vector3.{0, 0, 0};
 g_shakeStrength: float = 0;
 g_shakeTime: float = 0;
 
@@ -197,6 +198,14 @@ DEG_TO_RAD :: PI / 180;
 SHAKE_MAX_OFFSET :: 20.0;
 SHAKE_DECAY      :: 0.05;
 
+ToVec3 :: (v: Vector2) -> Vector3 {
+	return .{v.x, v.y, 0};
+}
+
+ToVec2 :: (v: Vector3) -> Vector2 {
+	return .{v.x, v.y};
+}
+
 UpdateShake :: (delta: float) {
 	tracy.ZoneScoped();
     if g_shakeStrength > 0 {
@@ -207,7 +216,7 @@ UpdateShake :: (delta: float) {
         g_cameraOffset.x = sin(g_shakeTime * 1.1) * magnitude * SHAKE_MAX_OFFSET;
         g_cameraOffset.y = cos(g_shakeTime * 0.9) * magnitude * SHAKE_MAX_OFFSET;
     } else {
-        g_cameraOffset = .{0, 0};
+        g_cameraOffset = .{0, 0, 0};
     }
 }
 
@@ -220,6 +229,9 @@ UpdateCollisionCache :: (p_entities: [] Entity) {
 	for *bucket : g_collisionCache {
 		array_reset_keeping_memory(bucket);
 	}
+	// We can also use the same loop to re-reserve our spatial grid
+	SpatialClear(*g_spatialGrid);
+
 	for *entity : p_entities {
 		// Collision layer is not applied to this entity
 		if (entity.type & EEntityType.CollisionEnabledLayer) == 0 {
@@ -228,6 +240,7 @@ UpdateCollisionCache :: (p_entities: [] Entity) {
 		// Get the bit where it belongs
 		index := ExtractBitIndex(cast(u64)entity.type);
 		array_add(*(g_collisionCache[index]), entity.id);
+		SpatialRegisterEntityAt(g_spatialGrid, entity.id, entity.position);
 	}
 }
 	
@@ -235,19 +248,19 @@ DrawEntity :: (entity: *Entity) {
 	tracy.ZoneScoped();
 	entitySize := entity.shapeSize * entity.scaleFactor;
 	if (entity.shape == .Circle) {
-		DrawCircle(entity.position + g_cameraOffset, entitySize, entity.color);
+		DrawCircle(ToVec2(entity.position + g_cameraOffset), entitySize, entity.color);
 	}
 	else if (entity.shape == .Triangle) {
-		DrawTriangle(entity.position + g_cameraOffset, entitySize, entity.rotation, entity.color);
+		DrawTriangle(ToVec2(entity.position + g_cameraOffset), entitySize, entity.rotation, entity.color);
 	}
 	else if (entity.shape == .Square) {
-		DrawRect(entity.position + g_cameraOffset, Vector2.{entitySize, entitySize}, entity.color, entity.rotation);
+		DrawRect(ToVec2(entity.position + g_cameraOffset), Vector2.{entitySize, entitySize}, entity.color, entity.rotation);
 	}
 	else if (entity.shape == .GradientCircle) {
-		DrawGradientCircle(entity.position + g_cameraOffset, entitySize, entity.color);
+		DrawGradientCircle(ToVec2(entity.position + g_cameraOffset), entitySize, entity.color);
 	}
 	else if (entity.shape == .Star) {
-		DrawStar(entity.position + g_cameraOffset, entitySize, entitySize * 0.3, color = entity.color);
+		DrawStar(ToVec2(entity.position + g_cameraOffset), entitySize, entitySize * 0.3, color = entity.color);
 	}
 }
 
@@ -293,17 +306,17 @@ CheckWaveCompletion :: () {
     }
 }
 
-CalculateRandomSpawnPoint :: (outSpawnPoint: *SpawnPoint) -> Vector2 {
+CalculateRandomSpawnPoint :: (outSpawnPoint: *SpawnPoint) -> Vector3 {
 	tracy.ZoneScoped();
 	spotNumericMin := cast(u8)SpawnPoint.Top;
 	spotNumericMax := (cast(u8)SpawnPoint.Right) + 1;
 	<< outSpawnPoint = cast(SpawnPoint)RandIntInRange(spotNumericMin, spotNumericMax);
 
 	if #complete << outSpawnPoint == {
-		case .Top; return RandVec2(ScreenUpperLeft(), ScreenUpperRight());
-		case .Bottom; return RandVec2(ScreenLowerLeft(), ScreenLowerRight());
-		case .Left; return RandVec2(ScreenLowerLeft(), ScreenUpperLeft());
-		case .Right; return RandVec2(ScreenLowerRight(), ScreenUpperRight());
+		case .Top; return ToVec3(RandVec2(ScreenUpperLeft(), ScreenUpperRight()));
+		case .Bottom; return ToVec3(RandVec2(ScreenLowerLeft(), ScreenLowerRight()));
+		case .Left; return ToVec3(RandVec2(ScreenLowerLeft(), ScreenUpperLeft()));
+		case .Right; return ToVec3(RandVec2(ScreenLowerRight(), ScreenUpperRight()));
 	}
 }
 
@@ -409,8 +422,8 @@ DrawUI :: (delta: float) {
 	    color = Vector4.{1, 1, 1, 1.0};
 
 	    restartPos := screenCenter;
-	    restartPos.y += VEC2_DOWN.y * (height * 0.1);
-	    restartPos.x += VEC2_LEFT.x * (width * 0.1);
+	    restartPos.y += VEC3_DOWN.y * (height * 0.1);
+	    restartPos.x += VEC3_LEFT.x * (width * 0.1);
 	    
 	    text_width = Simp.prepare_text(g_font, "[Restart]");
 	    disToRestart := magnitude(restartPos - g_mousePosition);
@@ -426,8 +439,8 @@ DrawUI :: (delta: float) {
 
 	    color = Vector4.{1, 1, 1, 1.0};
 	    quitPos := screenCenter;
-	    quitPos.y += VEC2_DOWN.y * (height * 0.1);
-	    quitPos.x += VEC2_RIGHT.x * (width * 0.1);
+	    quitPos.y += VEC3_DOWN.y * (height * 0.1);
+	    quitPos.x += VEC3_RIGHT.x * (width * 0.1);
 	    
 	    disToQuit := magnitude(quitPos - g_mousePosition);
 	    if (disToQuit <= xx text_width) {
@@ -512,12 +525,12 @@ RestoreTexelOffsetSystem :: (delta: float) {
 	g_additionalTexelOffset = DEFAULT_TEXEL_OFFSET;
 }
 
-SpawnPointDefaultTravelDir :: (spawnPosition: SpawnPoint, entity: *Entity) -> Vector2 {
+SpawnPointDefaultTravelDir :: (spawnPosition: SpawnPoint, entity: *Entity) -> Vector3 {
 	if #complete spawnPosition == {
-		case .Top; return VEC2_DOWN;
-		case .Bottom; return VEC2_UP;
-		case .Left; return VEC2_RIGHT;
-		case .Right; return VEC2_LEFT;
+		case .Top; return VEC3_DOWN;
+		case .Bottom; return VEC3_UP;
+		case .Left; return VEC3_RIGHT;
+		case .Right; return VEC3_LEFT;
 	}
 }
 
@@ -670,7 +683,7 @@ AngleBetween :: (a: Vector2, b: Vector2) -> float {
     return atan2((b.y - a.y) * DEG_TO_RAD, (b.x - a.x) * DEG_TO_RAD);
 }
 
-ShootBullet :: (position: Vector2, shootDir: Vector2, color: Vector4, collisionMask: EEntityType, speed: float = DEFAULT_BULLET_SPEED) {
+ShootBullet :: (position: Vector3, shootDir: Vector3, color: Vector4, collisionMask: EEntityType, speed: float = DEFAULT_BULLET_SPEED) {
 	bullet := Entity.{
 		type = .Bullet,
 		position = position,
@@ -690,7 +703,7 @@ ShootBullet :: (position: Vector2, shootDir: Vector2, color: Vector4, collisionM
 	AddEntity(bullet);
 }
 
-ShootShard :: (position: Vector2, shootDir: Vector2, damageAllies: bool) {
+ShootShard :: (position: Vector3, shootDir: Vector3, damageAllies: bool) {
 	collisionMask : EEntityType;
 	color: Vector4;
 	lifetime : float = 3;
@@ -726,7 +739,7 @@ ShootShard :: (position: Vector2, shootDir: Vector2, damageAllies: bool) {
 	AddEntity(bullet);
 }
 
-EnemyDeathParticleVFX :: (position: Vector2, shootDir: Vector2) {
+EnemyDeathParticleVFX :: (position: Vector3, shootDir: Vector3) {
 	bullet := Entity.{
 		type = .VFX,
 		position = position,
@@ -745,7 +758,7 @@ EnemyDeathParticleVFX :: (position: Vector2, shootDir: Vector2) {
 	AddEntity(bullet);
 }
 
-BulletCollisionParticleVFX :: (position: Vector2, shootDir: Vector2) {
+BulletCollisionParticleVFX :: (position: Vector3, shootDir: Vector3) {
 	bullet := Entity.{
 		type = .VFX,
 		position = position,
@@ -765,7 +778,7 @@ BulletCollisionParticleVFX :: (position: Vector2, shootDir: Vector2) {
 }
 
 
-ConeVFX :: (position: Vector2, direction: Vector2, delta: float, coneAngle: float = 60.0, particleCount: int = 3) {
+ConeVFX :: (position: Vector3, direction: Vector3, delta: float, coneAngle: float = 60.0, particleCount: int = 3) {
     halfCone := coneAngle / 2.0;
     step := coneAngle / cast(float)((particleCount * delta) - 1);
 
@@ -791,7 +804,7 @@ ConeVFX :: (position: Vector2, direction: Vector2, delta: float, coneAngle: floa
     }
 }
 
-DropBomb :: (position: Vector2) {
+DropBomb :: (position: Vector3) {
 	// Instantiate a big ass entity
 	entity := Entity.{
 		position = position,
@@ -829,10 +842,10 @@ EnemyShoot :: (entity: *Entity, delta: float) {
 		if (entity.shootAnimTimer <= 0) {
 			if (entity.flags & .CanMultiShoot) {
 				SHOOT_POS_OFFSET :: 20.0;
-				ShootBullet(entity.position + (VEC2_RIGHT * SHOOT_POS_OFFSET), VEC2_RIGHT, ENEMY_BULLET_COLOR, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
-				ShootBullet(entity.position + (VEC2_LEFT * SHOOT_POS_OFFSET), VEC2_LEFT, ENEMY_BULLET_COLOR, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
-				ShootBullet(entity.position + (VEC2_UP * SHOOT_POS_OFFSET), VEC2_UP, ENEMY_BULLET_COLOR, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
-				ShootBullet(entity.position + (VEC2_DOWN * SHOOT_POS_OFFSET), VEC2_DOWN, ENEMY_BULLET_COLOR, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+				ShootBullet(entity.position + (VEC3_RIGHT * SHOOT_POS_OFFSET), VEC3_RIGHT, ENEMY_BULLET_COLOR, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+				ShootBullet(entity.position + (VEC3_LEFT * SHOOT_POS_OFFSET), VEC3_LEFT, ENEMY_BULLET_COLOR, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+				ShootBullet(entity.position + (VEC3_UP * SHOOT_POS_OFFSET), VEC3_UP, ENEMY_BULLET_COLOR, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
+				ShootBullet(entity.position + (VEC3_DOWN * SHOOT_POS_OFFSET), VEC3_DOWN, ENEMY_BULLET_COLOR, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
 			}
 			else {
 				shootDir := normalize(g_entities[g_playerId].position - entity.position);
@@ -856,11 +869,11 @@ PlayerShoot :: (entity: *Entity) {
 	if (entity.stamina < STAMINA_PER_BULLET) {
 		return;
 	}
-	shootDir := normalize(g_mousePosition - entity.position);
+	shootDir := normalize(ToVec3(g_mousePosition)- entity.position);
 	ShootBullet(entity.position, shootDir, PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
 	if (entity.flags & .HasSplitBullet) {
-		ShootBullet(entity.position + (VEC2_RIGHT * 2), RotateVec2(shootDir, 90), PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
-		ShootBullet(entity.position + (VEC2_LEFT * 2), RotateVec2(shootDir, -90), PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
+		ShootBullet(entity.position + (VEC3_RIGHT * 2), RotateVec2(shootDir, 90), PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
+		ShootBullet(entity.position + (VEC3_LEFT * 2), RotateVec2(shootDir, -90), PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
 		g_splitBulletsLeft -= 1;
 		
 		if (g_splitBulletsLeft <= 0) {
@@ -871,7 +884,7 @@ PlayerShoot :: (entity: *Entity) {
 	g_staminaUnchangedTimer	= STAMINA_FADE_THRESHOLD_TIME;
 }
 
-CalculateReflectionVector :: (direction: Vector2, normal: Vector2) -> Vector2 {
+CalculateReflectionVector :: (direction: Vector3, normal: Vector3) -> Vector3 {
 	return direction - ((2.0 * dot(direction, normal)) * normal);
 }
 
@@ -962,12 +975,12 @@ BounceOff :: (first: *Entity, second: *Entity, keepFirstStatic: bool = false) {
     overlapX := (first.shapeSize + second.shapeSize) - abs(diff.x);
     overlapY := (first.shapeSize+ second.shapeSize) - abs(diff.y);
 
-    normal : Vector2;
+    normal : Vector3;
     if overlapX < overlapY {
-    	normal = Vector2.{sign(diff.x), 0};
+    	normal = Vector3.{sign(diff.x), 0, 0};
     }
     else {
-    	normal = Vector2.{0, sign(diff.y)};
+    	normal = Vector3.{0, sign(diff.y), 0};
     }
 
 
@@ -1023,7 +1036,7 @@ InstantiateShield :: () {
 	AddEntity(shield);
 }
 
-DropLoot :: (position: Vector2) {
+DropLoot :: (position: Vector3) {
 	powerUpSelectN := RandIntInRange(xx EEntityFlags.PowerUpBeginNumber, xx EEntityFlags.PowerUpEndNumber);
 
 	powerUpSelectReal := cast(EEntityFlags)(1 << (powerUpSelectN - 1)); // yields the value of the flags
@@ -1033,7 +1046,7 @@ DropLoot :: (position: Vector2) {
 		shape = .Square,
 		shapeSize = DEFAULT_ENEMY_SIZE_PX,
 		position = position,
-		velocity = normalize(RandVec2(Vector2.{0,0}, Vector2.{1,1})),
+		velocity = normalize(ToVec3(RandVec2(Vector2.{0,0}, Vector2.{1,1}))),
 		rotationVelocity = DEFAULT_PICKUP_SPEED,
 		speed = DEFAULT_PICKUP_SPEED,
 		flags = powerUpSelectReal | .HasLifetime,
@@ -1048,7 +1061,6 @@ DropLoot :: (position: Vector2) {
 	
 CollisionSystem :: (entity: *Entity) {
 	tracy.ZoneScoped();
-	// Filter out the collision masks if this gets too slow
 	// Now we choose the masks we want to collide with
 	TOTAL_MASKS : u64 : size_of(EEntityType) * 8;
 
@@ -1069,49 +1081,39 @@ CollisionSystem :: (entity: *Entity) {
 			}
 		}
 	}
-	
-	// for other : g_entities {
-	// 	// Cannot collide with ourselves
-	// 	otherHasCollisionLayer : bool = (other.type & EEntityType.CollisionEnabledLayer) != 0;
-	// 	isOtherWithinCollisionMask : bool = (other.type & entity.collisionMask) != 0 && (other.collisionMask & entity.type) != 0;
-	// 	if (other.id == entity.id || !otherHasCollisionLayer || !isOtherWithinCollisionMask) continue;
-
-	// 	collidesOnX := entity.position.x >= other.position.x - (other.shapeSize * other.scaleFactor) && entity.position.x <= other.position.x + (other.shapeSize * other.scaleFactor);
-	// 	collidesOnY := entity.position.y >= other.position.y - (other.shapeSize * other.scaleFactor) && entity.position.y <= other.position.y + (other.shapeSize * other.scaleFactor);
-		
-	// 	if (collidesOnX && collidesOnY) {
-	// 		HandleCollision(entity, *other);
-	// 	}
-	// }
 }
 
 DebugEntities :: () {
 	if (g_debugMousePtrEntityId == 0) {
 		mousePtrGuide := Entity.{
 			type = .Debug,
-			position = g_mousePosition,
+			position = .{g_mousePosition.x, g_mousePosition.y, 0},
 			shape = .Circle,
 			shapeSize = 20,
 			color = Vector4.{0, 0, 0, 1}
 		};
 		g_debugMousePtrEntityId = AddEntity(mousePtrGuide);
 	}
-	g_entities[g_debugMousePtrEntityId].position = g_mousePosition;
+	g_entities[g_debugMousePtrEntityId].position = .{g_mousePosition.x, g_mousePosition.y, 0};
 }
 
-approximately_equal :: (a: Vector2, b: Vector2, epsilon: float = 0.0001) -> bool {
-    return abs(a.x - b.x) < epsilon && abs(a.y - b.y) < epsilon;
+approximately_equal :: (a: Vector3, b: Vector3, epsilon: float = 0.0001) -> bool {
+    return abs(a.x - b.x) < epsilon && abs(a.y - b.y) < epsilon && abs(a.z - b.z) < epsilon;
 }
 
 magnitude :: (v: Vector2) -> float {
     return sqrt(v.x * v.x + v.y * v.y);
 }
 
-RotateVec2 :: (vec: Vector2, degrees: float) -> Vector2 {
+magnitude :: (v: Vector3) -> float {
+    return sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+}
+
+RotateVec2 :: (vec: Vector3, degrees: float) -> Vector3 {
 	length := magnitude(vec);
 	newX := vec.x * cos(degrees * DEG_TO_RAD) - vec.y * sin(degrees * DEG_TO_RAD);
 	newY := vec.x * sin(degrees * DEG_TO_RAD) - vec.y * cos(degrees * DEG_TO_RAD);
-	return Vector2.{newX, newY};
+	return Vector3.{newX, newY, vec.z};
 }
 
 OnDamaged :: (entity: *Entity, damageSrc: *Entity) -> bool {
@@ -1161,8 +1163,8 @@ OnRecoverFromDamage :: (entity: *Entity) {
 HandleKnockback :: (entity: *Entity, delta: float) {
 	// Lerp the velocity to 0
 	KNOCKBACK_RECOVER_SPEED : float : 20.0;
-	entity.velocity = lerp(entity.velocity, Vector2.{0, 0}, delta * KNOCKBACK_RECOVER_SPEED);
-	if approximately_equal(entity.velocity, Vector2.{0, 0}) {
+	entity.velocity = lerp(entity.velocity, Vector3.{0, 0, 0}, delta * KNOCKBACK_RECOVER_SPEED);
+	if approximately_equal(entity.velocity, Vector3.{0, 0, 0}) {
 		// Restore its cached velocity
 		entity.velocity = entity.cacheVelocity;
 		entity.state = .None;
@@ -1192,7 +1194,7 @@ HandleAnimations :: (entity: *Entity, delta: float) {
 	
 UpdatePlayer :: (entity: *Entity, delta: float) {
 	tracy.ZoneScoped();
-	entity.velocity = Vector2.{0, 0};
+	entity.velocity = Vector3.{0, 0, 0};
 
 	if (entity.damageAnimTimer > 0) {
 		entity.damageAnimTimer -= delta;
@@ -1235,16 +1237,16 @@ UpdatePlayer :: (entity: *Entity, delta: float) {
 	}
 	
 	if input_button_states[cast(int) #char "W"] & .DOWN {
-    	entity.velocity += Vector2.{0, 1};
+    	entity.velocity += Vector3.{0, 1, 0};
 	}
 	if input_button_states[cast(int) #char "A"] & .DOWN {
-    	entity.velocity += Vector2.{-1, 0};
+    	entity.velocity += Vector3.{-1, 0, 0};
 	}
 	if input_button_states[cast(int) #char "S"] & .DOWN {
-    	entity.velocity += Vector2.{0, -1};
+    	entity.velocity += Vector3.{0, -1, 0};
 	}
 	if input_button_states[cast(int) #char "D"] & .DOWN {
-    	entity.velocity += Vector2.{1, 0};
+    	entity.velocity += Vector3.{1, 0, 0};
 	}
 
 	// We do not follow the mouse on animation
@@ -1252,11 +1254,11 @@ UpdatePlayer :: (entity: *Entity, delta: float) {
 		return;
 	}
 	entity.velocity = normalize(entity.velocity);
-	mouseDir := normalize(g_mousePosition - entity.position);
+	mouseDir := normalize(.{g_mousePosition.x, g_mousePosition.y, 0} - entity.position);
 	tmpAngle := atan2(mouseDir.x, mouseDir.y);
 	entity.rotation = -tmpAngle;
 
-	if (entity.velocity != Vector2.{0, 0}) {
+	if (entity.velocity != Vector3.{0, 0, 0}) {
 		// Draw a trail in a cone
 		ConeVFX(entity.position - (entity.velocity * 10), entity.velocity, delta);
 	}
@@ -1376,7 +1378,7 @@ InputSystem :: () {
 FollowSystem :: (entity: *Entity) {
 	tracy.ZoneScoped();
 	if !(entity.flags & .ShouldFollowPlayer) return;
-	playerPos: Vector2 = g_entities[g_playerId].position;
+	playerPos: Vector3 = g_entities[g_playerId].position;
 	rawVec := playerPos - entity.position;
 	direction := normalize(rawVec);
 	entity.velocity = direction;
@@ -1492,7 +1494,7 @@ DEFAULT_ENEMY_SPEED :: 150;
 DEFAULT_ENEMY_SIZE_PX :: 25;
 DEFAULT_ENEMY_SCORE :: 5;
 
-CreateEnemy :: (position: Vector2) -> Entity {
+CreateEnemy :: (position: Vector3) -> Entity {
 	tracy.ZoneScoped();
 	shape := EShape.Triangle;
 	flags := EEntityFlags.None;
@@ -1629,12 +1631,13 @@ InitGame :: () {
     g_score = 0;
     g_shakeTime = 0;
     g_shakeStrength = 0;
-    g_cameraOffset = Vector2.{0, 0};
+    g_cameraOffset = Vector3.{0, 0, 0};
     g_chaosMultiplier = 1;
     g_chaosPercentagePrev = 0;
     g_chaosPercentage = 0;
     g_augmentBits = .None;
     g_augmentPickActive = false;
+    SpatialClear(*g_spatialGrid);
 
     // Initialize our entity storage
 	memset(g_entities.data, 0, g_entities.count * size_of(type_of(g_entities.data.*)));
@@ -1656,7 +1659,7 @@ InitGame :: () {
 		originalHealth = DEFAULT_HEALTH * 10, // N hits
 		speed = 500,
 		stamina = DEFAULT_PLAYER_STAMINA,
-		position = .{width / 2.0, height / 2.0},
+		position = .{width / 2.0, height / 2.0, 0},
 	};
 
 	g_playerId = AddEntity(player);

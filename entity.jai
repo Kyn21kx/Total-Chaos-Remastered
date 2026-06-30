@@ -60,9 +60,9 @@ DEFAULT_COLLISION_MASK : EEntityType : .CollisionEnabledLayer;
 
 Entity :: struct {
 	id: u64 = 0;
-	position : Vector2;
-	velocity : Vector2;
-	cacheVelocity: Vector2;
+	position : Vector3;
+	velocity : Vector3;
+	cacheVelocity: Vector3;
 	rotation: float;
 	scaleFactor: float;
 	rotationVelocity: float;
