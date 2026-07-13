@@ -82,6 +82,7 @@ SPLIT_BULLET_COUNT :: 5;
 ENTITY_MAX_COUNT : u64 : 2048;
 
 BLACK_HOLE_MAX_COUNT :: 10;
+BLACK_HOLE_FORCE :: 0.5;
 
 DEFAULT_TEXEL_OFFSET :: 1.5;
 
@@ -141,8 +142,8 @@ g_isWaveCleared : bool = false;
 g_newWaveAnnouncement : bool = false;
 
 WAVE_BASE_ENEMIES_PER_WAVE :: 10;
-WAVE_MAX_ENEMIES_PER_WAVE :: 50;
-WAVE_ENEMIES_INCREMENT :: 3;
+WAVE_MAX_ENEMIES_PER_WAVE :: 100;
+WAVE_ENEMIES_INCREMENT :: 6;
 WAVE_BASE_SPAWN_INTERVAL :: 2.0;
 WAVE_MIN_SPAWN_INTERVAL :: 0.3;
 WAVE_SPAWN_INTERVAL_DECREASE :: 0.1;
@@ -959,13 +960,6 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 				ShootBullet(second.position, dir, PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
 			}
 		}
-		if (g_augmentBits & .GetEmClose) {
-			blackHole : Entity = .{
-				position = second.position,
-				shape = .GradientCircle,
-				shapeSize = DEFAULT_BLACK_HOLE_SIZE_PX
-			};
-		}
 
 		for i : 0..6 {
 			BulletCollisionParticleVFX(first.position, RotateVec2(first.velocity, i * 60.0));
@@ -1183,6 +1177,28 @@ OnDamaged :: (entity: *Entity, damageSrc: *Entity) -> bool {
 	return true;
 }
 
+BlackHoleSystem :: (entity: *Entity, delta: float) {
+	// Find all entities close to our poisition
+	cellIdx := SpatialGetCellIndex(entity.position);
+
+	for dx : -1 .. 1 {
+		for dy : -1.. 1 {
+			h : u64 = SpatialHashCell(.{ cast(s32)(cellIdx.x + dx), cast(s32)(cellIdx.y + dy), cast(s32)(cellIdx.z)});
+			entitiesAt : *[..]u64 = SpatialGetEntitiesAt(*g_spatialGrid, h);
+			if (entitiesAt != null) {
+				for neighbor : << entitiesAt {
+					if (g_entities[neighbor].type != .Enemy) continue;
+					// Now we suck them in
+					enemy : *Entity = *(g_entities[neighbor]);
+					// Direction
+					dir : Vector3 = normalize(entity.position - enemy.position);
+					enemy.velocity += dir * BLACK_HOLE_FORCE;
+				}
+			}
+		}
+	}
+
+}
 
 BombUpdate :: (entity: *Entity, delta: float) {
 // 	tracy.ZoneScoped();
@@ -1317,6 +1333,17 @@ HealthSystem :: (entity: *Entity, delta: float) {
 
 			if (RandChance(1, 10)) {
 				DropLoot(entity.position);
+			}
+
+			if (g_augmentBits & .GetEmClose && RandChance(1, 2)) {
+				blackHole : Entity = .{
+					type = .BlackHole,
+					position = entity.position,
+					shape = .GradientCircle,
+					shapeSize = DEFAULT_BLACK_HOLE_SIZE_PX,
+					color = .{1, 95.0 / 255.0, 3.0 / 255.0, 1}
+				};
+				AddEntity(blackHole);
 			}
 
 			// Normal animation
@@ -1516,6 +1543,9 @@ Update :: () {
 		}
 		else if (entity.type == .Shield) {
 			(*entity).position = g_entities[g_playerId].position;
+		}
+		else if (entity.type == .BlackHole) {
+			BlackHoleSystem(*entity, current_dt);
 		}
 		
 		FollowSystem(*entity);
