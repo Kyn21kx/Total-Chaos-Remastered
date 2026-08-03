@@ -84,7 +84,7 @@ ENTITY_MAX_COUNT : u64 : 2048;
 BLACK_HOLE_MAX_COUNT :: 10;
 BLACK_HOLE_FORCE :: 0.5;
 
-DEFAULT_TEXEL_OFFSET :: 1.5;
+DEFAULT_TEXEL_OFFSET :: 0.15;
 
 g_shouldQuitGame := false;
 g_entities : [ENTITY_MAX_COUNT] Entity;
@@ -826,7 +826,7 @@ DropBomb :: (position: Vector3) {
 	};
 	
 	g_shakeStrength = 2.0;
-	g_additionalTexelOffset = 3.0;
+	g_additionalTexelOffset = 0.5;
 	g_restoreTexelOffsetAfter = 1.5 * SLOW_TIME_SCALE;
 	
 	g_timeScale = SLOW_TIME_SCALE;
@@ -915,8 +915,8 @@ IncreaseScore :: (diff: int) {
 GetFirstNeighborEnemy :: (cell: Vector3, except: u64) -> u64 {
 	cellIdx := SpatialGetCellIndex(cell);
 
-	for dx : -1 .. 1 {
-		for dy : -1.. 1 {
+	for dx : -2 .. 2 {
+		for dy : -2.. 2 {
 			h : u64 = SpatialHashCell(.{ cast(s32)(cellIdx.x + dx), cast(s32)(cellIdx.y + dy), cast(s32)(cellIdx.z)});
 			entitiesAt : *[..]u64 = SpatialGetEntitiesAt(*g_spatialGrid, h);
 			if (entitiesAt != null) {
@@ -975,7 +975,7 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 		if (OnDamaged(first, second)) {
 			first.health -= second.damage;
 			g_shakeStrength = 0.5;
-			g_additionalTexelOffset = 3.0;
+			g_additionalTexelOffset = 1.0;
 			g_restoreTexelOffsetAfter = 0.2;
 			for i : 0..6 {
 				BulletCollisionParticleVFX(second.position, RotateVec2(second.velocity, i * 60.0));
@@ -1672,20 +1672,34 @@ DrawFrameBegin :: () {
 
 DrawFrameEnd :: () {
 // 	tracy.ZoneScoped();
-	Simp.set_render_target(g_bloomTempPass);
 
+    // Bloom pass 1: threshold bright pixels + horizontal blur → bloomTempPass
+	Simp.set_render_target(g_bloomTempPass);
     Simp.set_shader_for_images(g_sceneTexture);
     Simp.set_uniform_float_for_images("pass_direction", 1.0);
     Simp.set_uniform_float_for_images("additional_offset", g_additionalTexelOffset);
+    Simp.immediate_quad(0, 0, xx width, xx height, Vector4.{1,1,1,1});
 
-    Simp.immediate_quad(0, 0, xx width, xx height, Vector4.{1,1,1,1});	
+    // Blit original scene to window
     Simp.set_render_target(g_window);
     Simp.clear_render_target(.0, .01, .03, 1);
-
-	Simp.set_shader_for_images(g_sceneTexture);
-	Simp.set_uniform_float_for_images("pass_direction", 0.0);
-	Simp.set_uniform_float_for_images("additional_offset", g_additionalTexelOffset);
+    GL.glEnable(GL.GL_BLEND);
+    GL.glBlendFunc(GL.GL_ONE, GL.GL_ZERO);
+    Simp.set_shader_for_images(g_sceneTexture);
+    Simp.set_uniform_float_for_images("pass_direction", -1.0);
     Simp.immediate_quad(0, 0, xx width, xx height, Vector4.{1,1,1,1});
+    Simp.immediate_flush();
+
+    // Bloom pass 2: vertical blur bloomTempPass → window (additive on top of scene)
+    GL.glBlendFunc(GL.GL_ONE, GL.GL_ONE);
+    Simp.set_shader_for_images(g_bloomTempPass);
+    Simp.set_uniform_float_for_images("pass_direction", 0.0);
+    Simp.set_uniform_float_for_images("additional_offset", g_additionalTexelOffset);
+    Simp.immediate_quad(0, 0, xx width, xx height, Vector4.{1,1,1,1});
+    Simp.immediate_flush();
+
+    // Restore normal alpha blending
+    GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA);
 }
 
 InitGame :: () {
