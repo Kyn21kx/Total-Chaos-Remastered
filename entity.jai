@@ -88,6 +88,14 @@ Entity :: struct {
 
 	collisionMask: EEntityType = DEFAULT_COLLISION_MASK;
 
+	// Trail particle emission (framerate independent, driven by particleRate per second)
+	particleEmit: bool;
+	particleRate: float;         // particles emitted per second
+	particleAccumulator: float;  // internal accumulator for framerate-independent emission
+	particleLifetime: float;
+	particleSize: float;
+	particleColor: Vector4;
+
 	flags: EEntityFlags;
 	type : EEntityType;
 }

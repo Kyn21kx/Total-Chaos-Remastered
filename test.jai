@@ -13,7 +13,7 @@
 #load "shapes3d.jai";
 #load "augments.jai";
 #load "spatial_grid.jai";
-using Sound :: #import "Sound_Player"(VERBOSE = false);
+#load "multi_sound.jai";
 
 SpawnPoint :: enum u8 {
 	Top;
@@ -124,10 +124,10 @@ g_sceneTexture: *Simp.Texture;
 g_bloomTempPass: *Simp.Texture;
 g_window: Window_Type;
 
-g_music: Sound_Data;
-g_pauseMusic: Sound_Data;
-g_audioStream: *Sound_Stream;
-g_pauseStream: *Sound_Stream;
+g_soundPlayer: MultiSoundPlayer;
+g_music: s32;
+g_pauseMusic: s32;
+g_bulletSfx: s32;
 
 g_enemySpawnTimer : float64 = 0;
 g_enemyCount: s32 = 0;
@@ -489,21 +489,16 @@ DrawUI :: (delta: float) {
 	    }
 	    Simp.draw_prepared_text(g_font, xx (quitPos.x - (text_width * 0.5)), xx quitPos.y, color);
 
-	    g_audioStream.user_flags |= .PAUSED_DUE_TO_MENU;
-        g_audioStream.current_rate = 0;
+		MultiSoundPlayerPause(*g_soundPlayer, g_music, .PAUSED_DUE_TO_MENU);
 
-        if (g_pauseStream.user_flags & .PAUSED_DUE_TO_MENU) {
-	    	g_pauseStream.current_rate = g_audioStream.desired_rate;
-	        g_pauseStream.user_flags &= ~.PAUSED_DUE_TO_MENU;
+        if (MultiSoundPlayerHasFlag(*g_soundPlayer, g_pauseMusic, .PAUSED_DUE_TO_MENU)) {
+        	MultiSoundPlayerResume(*g_soundPlayer, g_pauseMusic, .PAUSED_DUE_TO_MENU);
         }
         
     }
-    else if (g_audioStream.user_flags & .PAUSED_DUE_TO_MENU) {
-    	g_audioStream.current_rate = g_audioStream.desired_rate;
-        g_audioStream.user_flags &= ~.PAUSED_DUE_TO_MENU;
-
-	    g_pauseStream.user_flags |= .PAUSED_DUE_TO_MENU;
-	    g_pauseStream.current_rate = 0;
+    else if (MultiSoundPlayerHasFlag(*g_soundPlayer, g_music, .PAUSED_DUE_TO_MENU)) {
+    	MultiSoundPlayerResume(*g_soundPlayer, g_music, .PAUSED_DUE_TO_MENU);
+		MultiSoundPlayerPause(*g_soundPlayer, g_pauseMusic, .PAUSED_DUE_TO_MENU);
     }
 
 }
@@ -704,6 +699,11 @@ ShootBullet :: (position: Vector3, shootDir: Vector3, color: Vector4, collisionM
 		velocity = shootDir,
 		initialLifetime = 3,
 		remainingLifetime = 3,
+		particleEmit = true,
+		particleRate = 60,
+		particleLifetime = 0.5,
+		particleSize = DEFAULT_BULLET_SIZE_PX * 0.4,
+		particleColor = color,
 		collisionMask = collisionMask
 	};
 	
@@ -741,6 +741,11 @@ ShootShard :: (position: Vector3, shootDir: Vector3, damageAllies: bool) {
 		rotationVelocity = 2,
 		initialLifetime = lifetime,
 		remainingLifetime = lifetime,
+		particleEmit = true,
+		particleRate = 40,
+		particleLifetime = 0.6,
+		particleSize = DEFAULT_BULLET_SIZE_PX * 0.4,
+		particleColor = color,
 		collisionMask = collisionMask
 	};
 	
@@ -764,6 +769,36 @@ EnemyDeathParticleVFX :: (position: Vector3, shootDir: Vector3) {
 	};
 	
 	AddEntity(bullet);
+}
+
+SpawnBulletTrailParticle :: (position: Vector3, shape: EShape, color: Vector4, size: float, lifetime: float) {
+	particle := Entity.{
+		type = .VFX,
+		position = position,
+		shape = shape,
+		flags = .HasLifetime | .DecreaseSizeOverLifeTime,
+		shapeSize = size,
+		color = color,
+		initialLifetime = lifetime,
+		remainingLifetime = lifetime,
+		collisionMask = .None
+	};
+
+	AddEntity(particle);
+}
+
+// Accumulates time and spawns particles at a fixed rate, so the trail is
+// independent of the frame rate (a slow frame spawns multiple particles).
+BulletTrailSystem :: (entity: *Entity, delta: float) {
+	if !entity.particleEmit {
+		return;
+	}
+
+	entity.particleAccumulator += delta * entity.particleRate;
+	while (entity.particleAccumulator >= 1.0) {
+		entity.particleAccumulator -= 1.0;
+		SpawnBulletTrailParticle(entity.position, entity.shape, entity.particleColor, entity.particleSize, entity.particleLifetime);
+	}
 }
 
 BulletCollisionParticleVFX :: (position: Vector3, shootDir: Vector3) {
@@ -1246,6 +1281,9 @@ HandleAnimations :: (entity: *Entity, delta: float) {
 		entity.rotation += delta * PARRY_ANIM_SPEED;
 		entity.parryAnimTimer -= delta;
 	}
+	if (entity.type == .Bullet) {
+		BulletTrailSystem(entity, delta);
+	}
 }
 	
 UpdatePlayer :: (entity: *Entity, delta: float) {
@@ -1623,29 +1661,28 @@ RemoveEntity :: (entity: *Entity) {
 InitResources :: () {
     path := path_strip_filename(get_path_of_running_executable());
     set_working_directory(path);
-    g_music = load_audio_file("assets/audio/Contact_Trimmed.wav");
-    if (!g_music.loaded) {
-    	print("Failed to load music!");
+
+    MultiSoundPlayerInit(*g_soundPlayer, 3);
+
+    g_music = MultiSoundPlayerLoadSoundFile(*g_soundPlayer, "assets/audio/Contact_Trimmed.wav", .MUSIC);
+    if (g_music == -1) {
     	exit(1);
     }
-    
-    devices := get_devices();
-    success := sound_player_init(.{});
-    assert(success);
 
-    g_audioStream = make_stream(*g_music, .MUSIC);
-    set_repeating(g_audioStream, true);
-    g_audioStream.user_volume_scale = 0.5;
-    
-    start_playing(g_audioStream);
-    
-    g_pauseMusic = load_audio_file("assets/audio/Rtho_LowPass.wav");
-    g_pauseStream = make_stream(*g_pauseMusic, .MUSIC);
-    set_repeating(g_pauseStream, true);
-    start_playing(g_pauseStream);
+    g_pauseMusic = MultiSoundPlayerLoadSoundFile(*g_soundPlayer, "assets/audio/Rtho_LowPass.wav", .MUSIC);
+    if (g_pauseMusic == -1) {
+    	exit(1);
+    }
 
-    g_pauseStream.user_flags |= .PAUSED_DUE_TO_MENU;
-    g_pauseStream.current_rate = 0;
+    MultiSoundPlayerSetRepeating(*g_soundPlayer, g_music, true);
+    MultiSoundPlayerSetVolume(*g_soundPlayer, g_music, 0.5);
+    MultiSoundPlayerPlay(*g_soundPlayer, g_music);
+    
+    
+    MultiSoundPlayerSetRepeating(*g_soundPlayer, g_pauseMusic, true);
+    MultiSoundPlayerPlay(*g_soundPlayer, g_pauseMusic);
+    MultiSoundPlayerPause(*g_soundPlayer, g_pauseMusic, .PAUSED_DUE_TO_MENU);
+
 
     g_font = Simp.get_font_at_size("assets/fonts/Nova_Square", "NovaSquare-Regular.ttf", 24);
     if (!g_font) {
