@@ -3,6 +3,7 @@
 using Sound :: #import "Sound_Player"(VERBOSE = false);
 
 
+// TODO: Streams are handled by Jai's sound manager thread, so it's probably a good idea to make a FireAndForget function
 SingleSoundPlayer :: struct {
 	data: Sound_Data;
 	stream: *Sound_Stream;
@@ -52,7 +53,25 @@ MultiSoundPlayerSetRepeating :: (player: *MultiSoundPlayer, clipID: s32, repeati
 
 MultiSoundPlayerPlay :: (player: *MultiSoundPlayer, clipID: s32) {
 	singleP : *SingleSoundPlayer = *(player.sounds[clipID]);
+	if (singleP.stream.play_cursor > 0) {
+		// Stream is no longer valid here, jai's sound module deletes it, create a new one lol
+		newStream := make_stream(*singleP.data, singleP.stream.category);
+		newStream.user_volume_scale = singleP.stream.user_volume_scale;
+		newStream.user_flags = singleP.stream.user_flags;
+		singleP.stream = newStream;
+	}
 	start_playing(singleP.stream);
+}
+
+MultiSoundPlayerPlayAndForget :: (player: *MultiSoundPlayer, clipID: s32) {
+	singleP : *SingleSoundPlayer = *(player.sounds[clipID]);
+	// Stream is no longer valid here, jai's sound module deletes it, create a new one lol
+	newStream := make_stream(*singleP.data, singleP.stream.category);
+	newStream.user_volume_scale = singleP.stream.user_volume_scale;
+	newStream.user_flags = singleP.stream.user_flags;
+
+	// The memory of the newStream is (hopefully) handled by jai's sound module
+	start_playing(newStream);
 }
 
 MultiSoundPlayerPause :: (player: *MultiSoundPlayer, clipID: s32, pauseReason: Sound_Stream.UserFlags) {

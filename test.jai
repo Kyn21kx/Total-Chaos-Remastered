@@ -127,6 +127,7 @@ g_window: Window_Type;
 g_soundPlayer: MultiSoundPlayer;
 g_music: s32;
 g_pauseMusic: s32;
+g_explosionSfx: s32;
 g_bulletSfx: s32;
 
 g_enemySpawnTimer : float64 = 0;
@@ -867,6 +868,7 @@ DropBomb :: (position: Vector3) {
 	g_timeScale = SLOW_TIME_SCALE;
 	g_restoreTimeScaleAfter = 1.5;
 	g_bombHolderId = AddEntity(entity);
+	MultiSoundPlayerPlay(*g_soundPlayer, g_explosionSfx);
 	AddChaos(CHAOS_PER_BOMB);
 }
 
@@ -883,6 +885,7 @@ EnemyShoot :: (entity: *Entity, delta: float) {
 		entity.color.w = 1.0;
 		
 		if (entity.shootAnimTimer <= 0) {
+			// MultiSoundPlayerPlayAndForget(*g_soundPlayer, g_bulletSfx);
 			if (entity.flags & .CanMultiShoot) {
 				SHOOT_POS_OFFSET :: 20.0;
 				ShootBullet(entity.position + (VEC3_RIGHT * SHOOT_POS_OFFSET), VEC3_RIGHT, ENEMY_BULLET_COLOR, ENEMY_BULLET_COLLISION_MASK, DEFAULT_BULLET_SPEED * 0.4);
@@ -912,6 +915,7 @@ PlayerShoot :: (entity: *Entity) {
 	if (entity.stamina < STAMINA_PER_BULLET) {
 		return;
 	}
+	// MultiSoundPlayerPlay(*g_soundPlayer, g_bulletSfx);
 	shootDir := normalize(ToVec3(g_mousePosition)- entity.position);
 	ShootBullet(entity.position, shootDir, PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
 	if (entity.flags & .HasSplitBullet) {
@@ -1662,7 +1666,7 @@ InitResources :: () {
     path := path_strip_filename(get_path_of_running_executable());
     set_working_directory(path);
 
-    MultiSoundPlayerInit(*g_soundPlayer, 3);
+    MultiSoundPlayerInit(*g_soundPlayer, 4);
 
     g_music = MultiSoundPlayerLoadSoundFile(*g_soundPlayer, "assets/audio/Contact_Trimmed.wav", .MUSIC);
     if (g_music == -1) {
@@ -1673,6 +1677,18 @@ InitResources :: () {
     if (g_pauseMusic == -1) {
     	exit(1);
     }
+
+    g_explosionSfx = MultiSoundPlayerLoadSoundFile(*g_soundPlayer, "assets/audio/Explosion.wav", .MUSIC);
+    if (g_explosionSfx == -1) {
+    	exit(1);
+    }
+
+    // g_bulletSfx = MultiSoundPlayerLoadSoundFile(*g_soundPlayer, "assets/audio/Bullet.wav", .MUSIC);
+    // if (g_bulletSfx == -1) {
+    // 	exit(1);
+    // }
+    MultiSoundPlayerSetRepeating(*g_soundPlayer, g_explosionSfx, false);
+    // MultiSoundPlayerSetRepeating(*g_soundPlayer, g_bulletSfx, false);
 
     MultiSoundPlayerSetRepeating(*g_soundPlayer, g_music, true);
     MultiSoundPlayerSetVolume(*g_soundPlayer, g_music, 0.5);
