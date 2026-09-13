@@ -175,6 +175,11 @@ g_shakeTime: float = 0;
 width := 1920;
 height := 1080;
 
+// Actual OS window size — updated each frame in DrawFrameEnd and used to
+// scale the final blit and remap mouse coordinates into game space.
+g_windowWidth: s64 = 1920;
+g_windowHeight: s64 = 1080;
+
 MAX_ENEMIES_ON_SCREEN :: 10;
 
 current_dt: float = 0.016667;
@@ -802,7 +807,7 @@ BulletTrailSystem :: (entity: *Entity, delta: float) {
 	}
 }
 
-BulletCollisionParticleVFX :: (position: Vector3, shootDir: Vector3) {
+BulletCollisionParticleVFX :: (position: Vector3, shootDir: Vector3, color: Vector4 = .{0.8, 0.9, 0.4, 1}) {
 	bullet := Entity.{
 		type = .VFX,
 		position = position,
@@ -810,7 +815,7 @@ BulletCollisionParticleVFX :: (position: Vector3, shootDir: Vector3) {
 		shape = .Circle,
 		flags = .HasLifetime,
 		shapeSize = DEFAULT_BULLET_SIZE_PX * 0.2,
-		color = Vector4.{0.8, 0.9, 0.4, 1},
+		color = color,
 		velocity = shootDir,
 		// rotationVelocity = 3,
 		initialLifetime = 1,
@@ -996,7 +1001,7 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 			neighborEnemyId : u64 = GetFirstNeighborEnemy(second.position, second.id);
 			if (neighborEnemyId != 0) {
 				dir := normalize(g_entities[neighborEnemyId].position - second.position);
-				ShootBullet(second.position, dir, PLAYER_BULLET_COLOR, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
+				ShootBullet(second.position, dir, Vector4.{0.9, 0.1, 0.7, 1}, .Enemy | .Bullet, DEFAULT_BULLET_SPEED * 1.5);
 			}
 		}
 
@@ -1735,12 +1740,13 @@ DrawFrameEnd :: () {
 
     // Blit original scene to window
     Simp.set_render_target(g_window);
+    g_windowWidth, g_windowHeight = Simp.get_render_dimensions(g_window);
     Simp.clear_render_target(.0, .01, .03, 1);
     GL.glEnable(GL.GL_BLEND);
     GL.glBlendFunc(GL.GL_ONE, GL.GL_ZERO);
     Simp.set_shader_for_images(g_sceneTexture);
     Simp.set_uniform_float_for_images("pass_direction", -1.0);
-    Simp.immediate_quad(0, 0, xx width, xx height, Vector4.{1,1,1,1});
+    Simp.immediate_quad(0, 0, xx g_windowWidth, xx g_windowHeight, Vector4.{1,1,1,1});
     Simp.immediate_flush();
 
     // Bloom pass 2: vertical blur bloomTempPass → window (additive on top of scene)
@@ -1748,7 +1754,7 @@ DrawFrameEnd :: () {
     Simp.set_shader_for_images(g_bloomTempPass);
     Simp.set_uniform_float_for_images("pass_direction", 0.0);
     Simp.set_uniform_float_for_images("additional_offset", g_additionalTexelOffset);
-    Simp.immediate_quad(0, 0, xx width, xx height, Vector4.{1,1,1,1});
+    Simp.immediate_quad(0, 0, xx g_windowWidth, xx g_windowHeight, Vector4.{1,1,1,1});
     Simp.immediate_flush();
 
     // Restore normal alpha blending
@@ -1828,10 +1834,12 @@ main :: () {
 			update_window_events();	
 	    }
 	    	
-		mouseX, mouseY := get_mouse_pointer_position();	
-        Clamp(*mouseY, 0, height);
-        Clamp(*mouseX, 0, width);
-		g_mousePosition = Vector2.{cast(float) mouseX, height - cast(float)mouseY};
+		mouseX, mouseY := get_mouse_pointer_position();
+		scaleX := cast(float)width  / cast(float)g_windowWidth;
+		scaleY := cast(float)height / cast(float)g_windowHeight;
+		g_mousePosition = Vector2.{cast(float)mouseX * scaleX, cast(float)height - cast(float)mouseY * scaleY};
+		Clamp(*g_mousePosition.x, 0, cast(float)width);
+		Clamp(*g_mousePosition.y, 0, cast(float)height);
 	
 		DrawFrameBegin();
         Update();
