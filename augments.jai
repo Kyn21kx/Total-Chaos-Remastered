@@ -11,9 +11,10 @@ AugmentInfo :: struct {
     desc: string;
 }
 
-AUGMENTS_INFO :: AugmentInfo.[.{"Chaos Chain", "Whenever a bullet hits an enemy, shoot an additional bullet to a nearby enemy"}, .{"Get 'em Close!", "Dead enemies have a chance to spawn a black hole zone for a period of time that sucks enemies in"}, .{"Vampire Shot", "Gain +10% of the damage you inflict back as health"}, .{"Mosquitify", }];
+AUGMENTS_INFO :: AugmentInfo.[.{"Chaos Chain", "Whenever a bullet hits an enemy, shoot an additional bullet to a nearby enemy"}, .{"Get 'em Close!", "Dead enemies have a chance to spawn a black hole zone for a period of time that sucks enemies in"}, .{"Vampire Shot", "Gain +10% of the damage you inflict back as health"}, .{"Mosquitify", ""}];
 
-AUGMENT_COUNT :: enum_names(EAugment).count - 1;
+
+AUGMENT_COUNT :: #run enum_names(EAugment).count - 1;
 
 g_augmentBits: EAugment = .None;
 g_augmentPickActive: bool;

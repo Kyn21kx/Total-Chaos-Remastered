@@ -32,6 +32,7 @@ EMouseButtonState :: enum u8 {
 
 SLOW_TIME_SCALE :: 0.3;
 DEFAULT_PLAYER_COLOR :: Vector4.{3 / 255.0, 211 / 255.0, 252 / 255.0, 1};
+DEFAULT_PLAYER_SPEED :: 500;
 DEFAULT_PLAYER_SIZE_PX :: 25;
 ENEMY_BULLET_COLOR :: Vector4.{1, 0.01, 0, 1};
 
@@ -1301,6 +1302,10 @@ HandleAnimations :: (entity: *Entity, delta: float) {
 	
 UpdatePlayer :: (entity: *Entity, delta: float) {
 // 	tracy.ZoneScoped();
+	if (g_augmentBits & .Mosquitify) {
+		entity.speed = DEFAULT_PLAYER_SPEED * 1.5;
+		entity.scaleFactor = 0.3;
+	}
 	entity.velocity = Vector3.{0, 0, 0};
 
 	if (entity.damageAnimTimer > 0) {
@@ -1805,7 +1810,7 @@ InitGame :: () {
 		color = DEFAULT_PLAYER_COLOR,
 		health = DEFAULT_HEALTH * 10, // N hits
 		originalHealth = DEFAULT_HEALTH * 10, // N hits
-		speed = 500,
+		speed = DEFAULT_PLAYER_SPEED,
 		stamina = DEFAULT_PLAYER_STAMINA,
 		position = .{width / 2.0, height / 2.0, 0},
 	};
