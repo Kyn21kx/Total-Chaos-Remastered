@@ -2,12 +2,18 @@ EAugment :: enum u16 {
     None :: 0;
     ChaosChain :: 1;
     GetEmClose :: 2;
-    Savior :: 4;
+    VampireShot :: 4;
+    Mosquitify :: 8;
 }
 
-AUGMENT_NAMES :: string.["Chaos Chain", "Get 'em Close!", "Savior"] ;
+AugmentInfo :: struct {
+    name: string;
+    desc: string;
+}
 
-AUGMENT_COUNT :: 3;
+AUGMENTS_INFO :: AugmentInfo.[.{"Chaos Chain", "Whenever a bullet hits an enemy, shoot an additional bullet to a nearby enemy"}, .{"Get 'em Close!", "Dead enemies have a chance to spawn a black hole zone for a period of time that sucks enemies in"}, .{"Vampire Shot", "Gain +10% of the damage you inflict back as health"}, .{"Mosquitify", }];
+
+AUGMENT_COUNT :: enum_names(EAugment).count - 1;
 
 g_augmentBits: EAugment = .None;
 g_augmentPickActive: bool;
@@ -66,9 +72,12 @@ DrawAugmentCardGlow :: (screenPos: Vector2, color: Vector4, scale: float) {
     DrawCircle(screenPos, 35.0 * scale, Vector4.{color.x, color.y, color.z, 0.08}, 24);
 }
 
-DrawAugmentCardName :: (screenPos: Vector2, nameText: string, index: int, scale: float) {
+DrawAugmentCardInfo :: (screenPos: Vector2, nameText: string, descText: string, index: int, scale: float) {
     text_width := Simp.prepare_text(g_font, nameText);
     textPos := Vector2.{screenPos.x - text_width * 0.5, screenPos.y - 65.0 * scale};
+    Simp.draw_prepared_text(g_font, xx textPos.x, xx textPos.y, .{0, 0, 0, 1.0});
+    text_width = Simp.prepare_text(g_font, descText);
+    textPos = Vector2.{screenPos.x - text_width * 0.5, screenPos.y - (65.0 * 2.0) * scale};
     Simp.draw_prepared_text(g_font, xx textPos.x, xx textPos.y, .{0, 0, 0, 1.0});
 }
 
@@ -99,9 +108,7 @@ DrawAugmentPick :: () {
         else {
             draw_prism_3d(worldPos, CARD_ICON_SIZE_RADIUS * g_augmentPickHoverScale[i], CARD_ICON_SIZE_RADIUS * g_augmentPickHoverScale[i] * 1.5, .{0, g_augmentPickRotation, g_augmentPickRotation * 0.3}, color, DEFAULT_CAMERA_3D, cast(float)width, cast(float)height);
         }
-
-        nameText := AUGMENT_NAMES[idx];
-        DrawAugmentCardName(screenPos, nameText, i, g_augmentPickHoverScale[i]);
+        DrawAugmentCardInfo(screenPos, AUGMENTS_INFO[idx].name, AUGMENTS_INFO[idx].desc, i, g_augmentPickHoverScale[i]);
     }
 
     if g_augmentPickSelected >= 0 {

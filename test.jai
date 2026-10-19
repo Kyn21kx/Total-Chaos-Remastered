@@ -1005,6 +1005,10 @@ HandleCollision :: (first: *Entity, second: *Entity) {
 			}
 		}
 
+		if (g_augmentBits & .VampireShot) {
+			g_entities[g_playerId].health += first.damage * 0.2;
+		}
+
 		for i : 0..6 {
 			BulletCollisionParticleVFX(first.position, RotateVec2(first.velocity, i * 60.0));
 		}
